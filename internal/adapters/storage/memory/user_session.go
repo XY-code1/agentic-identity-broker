@@ -151,7 +151,7 @@ func (r *InMemoryUserSessionRepository) ListByPrincipal(ctx context.Context, pri
 	return sessions, nil
 }
 
-// ListActiveByPrincipal retrieves only non-expired sessions for a principal.
+// ListActiveByPrincipal retrieves only sessions that can still deliver an access token.
 func (r *InMemoryUserSessionRepository) ListActiveByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error) {
 	if principal.IsZero() {
 		return nil, errors.New("principal required")
@@ -162,7 +162,7 @@ func (r *InMemoryUserSessionRepository) ListActiveByPrincipal(ctx context.Contex
 
 	var sessions []*storage.UserSession
 	for _, session := range r.sessions {
-		if session.Principal == principal && !session.IsExpired() {
+		if session.Principal == principal && session.IsUsable() {
 			sessions = append(sessions, session)
 		}
 	}

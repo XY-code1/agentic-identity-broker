@@ -30,6 +30,10 @@ import { RevokeGrantButton } from '@components/consent/RevokeGrantButton';
 import { CIMDSection } from '@components/consent/CIMDSection';
 import { GrantValidityControl } from '@components/consent/GrantValidityControl';
 import { PermissionSetsList } from '@components/consent/PermissionSetsList';
+import {
+  ConsentReasonBanner,
+  parseConsentReason,
+} from '@components/consent/ConsentReasonBanner';
 import { useAgentGrants, useToggleGrant, useUpdateValidity } from '@hooks';
 import { loadConsentState, saveConsentSelections } from '@services/storage/session';
 import { validateGrantRequest, isSafeRedirectUrl } from '../utils/validation';
@@ -81,6 +85,14 @@ export function AgentGrantDetailPage() {
   }, [activeCallbackState, navigate]);
 
   const resolvedAgentId = agentId ?? '';
+
+  // A service connection, not the grant, sent the authorization request back here.
+  const [consentReason] = useState(() => {
+    const params = new URLSearchParams(location.search);
+    const reason = parseConsentReason(params.get('reason'));
+    const serviceID = params.get('service_id');
+    return reason && serviceID ? { reason, serviceID } : undefined;
+  });
 
   // Memoize options to keep a stable object reference across renders.
   // Without this, { sessionToken } creates a new object every render, causing
@@ -252,6 +264,7 @@ export function AgentGrantDetailPage() {
       currentUrl.searchParams.delete('consent_state_id');
       currentUrl.searchParams.delete('success');
       currentUrl.searchParams.delete('service_id');
+      currentUrl.searchParams.delete('reason');
       const redirectURI = `${currentUrl.origin}${currentUrl.pathname}`;
 
       const hasSelections = Object.keys(perPsIncludedServiceIds).length > 0;
@@ -518,6 +531,23 @@ export function AgentGrantDetailPage() {
               { label: agent.displayName },
             ]}
           />
+
+          {consentReason && (
+            <ConsentReasonBanner
+              reason={consentReason.reason}
+              serviceId={consentReason.serviceID}
+              serviceName={
+                services
+                  .map((service) =>
+                    service.kind === 'requirement'
+                      ? { id: service.serviceId, name: service.serviceName }
+                      : { id: service.serviceId, name: service.displayName },
+                  )
+                  .find((service) => service.id === consentReason.serviceID)?.name
+              }
+              onLogin={handleServiceLogin}
+            />
+          )}
 
           {/* Agent header card */}
           <Card padding="default">

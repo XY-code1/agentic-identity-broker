@@ -3,7 +3,7 @@
  *
  * Test Coverage:
  * - Component rendering with different session states
- * - Status badge variants (Active, Expiring Soon, Access Token Expired, Expired)
+ * - Status badge variants (Active, Expiring Soon, Expired)
  * - Action button visibility and behavior
  * - Loading state handling
  * - Accessibility compliance
@@ -28,6 +28,7 @@ const createMockSession = (
   is_expired: false,
   access_token_expired: false,
   has_refresh_token: true,
+  reauth_required: false,
   refresh_token_expires_at: new Date(
     Date.now() + 30 * 24 * 60 * 60 * 1000,
   ).toISOString(),
@@ -83,34 +84,26 @@ describe('SessionCard', () => {
       expect(screen.getByText('Google Drive')).toBeInTheDocument();
     });
 
-    it('renders "Access Token Expired" status when access token is expired', () => {
+    it('renders "Active" status when only the access token is expired', () => {
       const session = createMockSession({
         access_token_expired: true,
       });
-      const onTerminate = vi.fn();
 
-      const { container } = render(
-        <SessionCard session={session} onTerminate={onTerminate} />,
-      );
+      render(<SessionCard session={session} onTerminate={vi.fn()} />);
 
-      // Verify component renders for expired access token
-      expect(container).toBeInTheDocument();
-      expect(screen.getByText('Google Drive')).toBeInTheDocument();
+      expect(screen.getByText('Active')).toBeInTheDocument();
     });
 
     it('renders "Expired" status for fully expired session', () => {
       const session = createMockSession({
         is_expired: true,
+        reauth_required: true,
       });
-      const onTerminate = vi.fn();
 
-      const { container } = render(
-        <SessionCard session={session} onTerminate={onTerminate} />,
-      );
+      render(<SessionCard session={session} onTerminate={vi.fn()} />);
 
-      // Verify component renders for expired session
-      expect(container).toBeInTheDocument();
-      expect(screen.getByText('Google Drive')).toBeInTheDocument();
+      expect(screen.getByText('Expired')).toBeInTheDocument();
+      expect(screen.getByText('Re-authentication required')).toBeInTheDocument();
     });
 
     it('renders singular "agent" for dependent_agent_count of 1', () => {
@@ -215,19 +208,18 @@ describe('SessionCard', () => {
       expect(screen.queryByRole('button', { name: /view details/i })).toBeNull();
     });
 
-    it('renders expired message instead of buttons for expired session', () => {
+    it('renders expired message instead of Terminate for expired session', () => {
       const session = createMockSession({
         is_expired: true,
+        reauth_required: true,
       });
-      const onTerminate = vi.fn();
 
-      const { container } = render(
-        <SessionCard session={session} onTerminate={onTerminate} />,
-      );
+      render(<SessionCard session={session} onTerminate={vi.fn()} />);
 
-      // Verify component renders for expired session
-      expect(container).toBeInTheDocument();
-      expect(screen.getByText('Google Drive')).toBeInTheDocument();
+      expect(screen.getByText('Re-authentication required')).toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /terminate/i }),
+      ).not.toBeInTheDocument();
     });
   });
 

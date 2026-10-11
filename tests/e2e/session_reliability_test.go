@@ -15,6 +15,7 @@ import (
 
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	storagedomain "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
@@ -95,9 +96,9 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		return resp, body
 	}
 
-	completeConnect := func() {
+	completeConnectFor := func(serviceID id.ServiceID) {
 		resp, err := enduserServer.AuthenticatedGET(
-			"/api/third-party/"+githubID.String()+"/oauth2/authorize?redirect_uri="+url.QueryEscape("http://localhost:8000/sessions"),
+			"/api/third-party/"+serviceID.String()+"/oauth2/authorize?redirect_uri="+url.QueryEscape("http://localhost:8000/sessions"),
 			principal,
 		)
 		Expect(err).NotTo(HaveOccurred())
@@ -119,6 +120,7 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		Expect(callbackResp.Header.Get("Location")).To(ContainSubstring("success=true"))
 		Expect(callbackResp.Body.Close()).To(Succeed())
 	}
+	completeConnect := func() { completeConnectFor(githubID) }
 
 	// US5-S6 from specs/013-token-exchange/spec.md
 	It("[US5-S6] survives a transient provider outage during refresh without demanding re-authentication", func() {
@@ -158,5 +160,88 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(form.Get("grant_type")).To(Equal("refresh_token"))
 		Expect(form.Get("refresh_token")).To(Equal("long-lived-refresh"))
+	})
+
+	// US1-S7 from specs/008-thirdparty-oauth2-sessions/spec.md
+	It("[008 US1-S7] reports only sessions that cannot deliver tokens as requiring re-authentication", func() {
+		ctx := context.Background()
+		Expect(testStorage.UserSessions().Create(ctx, fixtures.ExpiredGitHubSessionForPrincipal(principal))).To(Succeed())
+		dead := fixtures.SessionWithoutRefreshToken(principal, fixtures.GitHubService().ID.String())
+		dead.ServiceID = id.NewServiceID()
+		deadService := fixtures.ServiceWithID(dead.ServiceID.String())
+		Expect(testStorage.Services().Create(ctx, deadService)).To(Succeed())
+		expired := time.Now().Add(-time.Minute)
+		dead.AccessTokenExpiresAt = &expired
+		dead.EncryptedAccessToken = fixtures.EncryptedToken(dead.ServiceID.String(), "dead-access")
+		dead.EncryptionContext = storagedomain.EncryptionContext{ServiceID: dead.ServiceID}
+		Expect(testStorage.UserSessions().Create(ctx, dead)).To(Succeed())
+
+		resp, err := enduserServer.AuthenticatedGET("/api/third-party/sessions", principal)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = resp.Body.Close() }()
+		Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
+		var body struct {
+			Data struct {
+				Sessions []map[string]any `json:"sessions"`
+			} `json:"data"`
+		}
+		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+		reauth := map[string]any{}
+		for _, session := range body.Data.Sessions {
+			reauth[session["service_id"].(string)] = session["reauth_required"]
+		}
+		Expect(reauth).To(HaveKeyWithValue(githubID.String(), false), "an expired access token with a refresh token stays usable")
+		Expect(reauth).To(HaveKeyWithValue(dead.ServiceID.String(), true))
+	})
+
+	// US3-S6 from specs/008-thirdparty-oauth2-sessions/spec.md
+	It("[008 US3-S6] answers a provider-rejected manual refresh with 409 refresh_rejected", func() {
+		ctx := context.Background()
+		Expect(testStorage.UserSessions().Create(ctx, fixtures.GitHubSessionForPrincipal(principal))).To(Succeed())
+		mockUpstream.WithErrorResponse("invalid_grant")
+
+		resp, err := enduserServer.AuthenticatedPOST("/api/third-party/"+githubID.String()+"/session/refresh", principal, "application/json", nil)
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = resp.Body.Close() }()
+		Expect(resp).To(matchers.HaveStatusCode(http.StatusConflict))
+		var body map[string]string
+		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+		Expect(body["error"]).To(Equal("refresh_rejected"))
+	})
+
+	// US2-S12 from specs/008-thirdparty-oauth2-sessions/spec.md
+	It("[008 US2-S12] records provider scope aliases under the configured scope values", func() {
+		ctx := context.Background()
+		google := fixtures.ServiceWithID(id.NewServiceID().String())
+		google.DisplayName = "Google"
+		google.IssuerURI = "https://accounts.google.com"
+		google.Endpoints.TokenEndpoint = mockUpstream.URL() + "/oauth/token"
+		google.Endpoints.AuthorizeEndpoint = mockUpstream.URL() + "/oauth/authorize"
+		google.Scopes = []model.OAuthScope{
+			{ScopeValue: "openid", Description: "OpenID"},
+			{ScopeValue: "email", Description: "Email"},
+		}
+		Expect(testStorage.Services().Create(ctx, google)).To(Succeed())
+		mockUpstream.WithScope("openid https://www.googleapis.com/auth/userinfo.email")
+
+		completeConnectFor(google.ID)
+
+		session, err := testStorage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), google.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(session.Scope).To(ConsistOf("openid", "email"))
+	})
+
+	// US1-S9 from specs/013-token-exchange/spec.md
+	It("[013 US1-S9] replaces the session scope with the scope returned by a refresh", func() {
+		ctx := context.Background()
+		Expect(testStorage.UserSessions().Create(ctx, fixtures.ExpiredGitHubSessionForPrincipal(principal))).To(Succeed())
+		mockUpstream.WithAccessToken("narrowed-access").WithScope("repo")
+
+		resp, _ := exchange()
+		Expect(resp.StatusCode).NotTo(Equal(http.StatusInternalServerError))
+
+		session, err := testStorage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), githubID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(session.Scope).To(Equal([]string{"repo"}))
 	})
 })

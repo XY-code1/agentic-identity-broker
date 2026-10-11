@@ -334,6 +334,9 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation b
 			return fmt.Errorf("scope %d: %w", i, err)
 		}
 	}
+	if err := validateScopeAliases(e.Scopes); err != nil {
+		return err
+	}
 
 	if err := e.ValidateProtectedResources(); err != nil {
 		return err
@@ -439,6 +442,9 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation b
 		if err := scope.Validate(); err != nil {
 			return fmt.Errorf("scope %d: %w", i, err)
 		}
+	}
+	if err := validateScopeAliases(e.Scopes); err != nil {
+		return err
 	}
 
 	if err := e.ValidateProtectedResources(); err != nil {

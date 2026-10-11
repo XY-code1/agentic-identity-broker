@@ -30,3 +30,24 @@ func TestUserSession_HasAccessTokenValidFor(t *testing.T) {
 		})
 	}
 }
+
+func TestUserSession_IsUsable(t *testing.T) {
+	past := time.Now().Add(-time.Hour)
+	future := time.Now().Add(time.Hour)
+	for _, tc := range []struct {
+		name    string
+		session UserSession
+		want    bool
+	}{
+		{name: "valid access token", session: UserSession{AccessTokenExpiresAt: &future}, want: true},
+		{name: "no recorded expiry", session: UserSession{}, want: true},
+		{name: "expired access token with refresh token", session: UserSession{AccessTokenExpiresAt: &past, EncryptedRefreshToken: []byte("r")}, want: true},
+		{name: "expired access token without refresh token", session: UserSession{AccessTokenExpiresAt: &past}, want: false},
+		{name: "expired refresh token", session: UserSession{AccessTokenExpiresAt: &past, EncryptedRefreshToken: []byte("r"), RefreshTokenExpiresAt: &past}, want: false},
+		{name: "expired refresh token with valid access token is expired per FR-002", session: UserSession{AccessTokenExpiresAt: &future, EncryptedRefreshToken: []byte("r"), RefreshTokenExpiresAt: &past}, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.session.IsUsable())
+		})
+	}
+}

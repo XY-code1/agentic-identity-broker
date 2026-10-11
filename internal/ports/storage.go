@@ -236,7 +236,8 @@ type UserSessionRepository interface {
 	// Returns empty slice if no sessions exist (not an error).
 	ListByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error)
 
-	// ListActiveByPrincipal retrieves only non-expired sessions for a principal.
+	// ListActiveByPrincipal retrieves only sessions that can still deliver an access token
+	// (storage.UserSession.IsUsable): a valid access token or a usable refresh token.
 	// Used for FR-020 consent submission validation and anyDelegatedSessionExpired checks.
 	// Returns empty slice if no active sessions exist (not an error).
 	ListActiveByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error)

@@ -76,6 +76,7 @@ type MockUpstreamOAuth2Server struct {
 	expiresIn               int
 	strictPublicClientMode  bool
 	transientFailureStatus  int
+	scope                   string
 	transientFailuresLeft   int
 	codeChallengesByCode    map[string]pkceChallenge
 
@@ -217,6 +218,15 @@ func (m *MockUpstreamOAuth2Server) WithExpiresIn(seconds int) *MockUpstreamOAuth
 	defer m.requestMutex.Unlock()
 
 	m.expiresIn = seconds
+	return m
+}
+
+// WithScope sets the scope reported in successful token responses. An empty scope omits the field.
+func (m *MockUpstreamOAuth2Server) WithScope(scope string) *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+
+	m.scope = scope
 	return m
 }
 
@@ -454,6 +464,7 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 	tokenType := m.tokenType
 	expiresIn := m.expiresIn
 	refreshToken := m.refreshToken
+	scope := m.scope
 	m.requestMutex.RUnlock()
 
 	if blockTokenUntilCanceled {
@@ -494,6 +505,9 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 		"token_type":    tokenType,
 		"expires_in":    expiresIn,
 		"refresh_token": refreshToken,
+	}
+	if scope != "" {
+		tokenResp["scope"] = scope
 	}
 
 	_ = json.NewEncoder(w).Encode(tokenResp)

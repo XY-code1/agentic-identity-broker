@@ -1391,7 +1391,7 @@ Define any project-specific terms or acronyms.)
 
 **RequirementType**: Enum with two values: "mandatory" (agent cannot function without this service, authorization blocked until requirement satisfied) and "optional" (agent can use if available, authorization proceeds regardless). Case-sensitive, lowercase only. Controls authorization flow behavior - only mandatory requirements block authorization.
 
-**Mandatory Service**: A third-party OAuth2 service marked with requirement_type="mandatory" in an agent's service requirements. Authorization flow validates that user has an active, non-expired OAuth2 session with all mandatory services and that session scopes are a superset of required_scopes (case-sensitive). If validation fails, user is redirected to consent screen to establish missing sessions before authorization continues.
+**Mandatory Service**: A third-party OAuth2 service marked with requirement_type="mandatory" in an agent's service requirements. Authorization flow validates that user has a usable OAuth2 session with all mandatory services and that session scopes are a superset of required_scopes (case-sensitive). If validation fails, user is redirected to consent screen with a consent redirect reason to establish missing sessions before authorization continues.
 
 **Optional Service**: A third-party OAuth2 service marked with requirement_type="optional" in an agent's service requirements. Displayed in consent UI with visual distinction (neutral badge vs trust-deep for mandatory). Does not block authorization flow - if user lacks session or scopes, authorization proceeds anyway. Allows agents to degrade gracefully when optional integrations unavailable.
 
@@ -1462,6 +1462,12 @@ Define any project-specific terms or acronyms.)
 ### Third-Party OAuth2 Session Management
 
 **UserSession**: An authenticated OAuth2 session between a user (principal) and a third-party service. Contains encrypted access/refresh tokens, scope, and expiration metadata. One session per (principal, service_id) pair enforced by database unique constraint. Aggregate root that owns the encrypted tokens and manages session lifecycle.
+
+**Usable Session**: A UserSession that can keep delivering access tokens to agents: its refresh token has not passed a recorded expiry, and either its access token is valid or a refresh token can obtain a new one (`UserSession.IsUsable`). The consent screen's connection status, the grant submission gate (`ListActiveByPrincipal`), the authorization flow and the sessions page's `reauth_required` share this definition. An expired access token alone does not make a session unusable.
+
+**Consent Redirect Reason**: The `reason` (`session_required`, `session_expired`, `scope_mismatch`) and `service_id` that the authorization flow adds to a consent redirect when a service connection, not the grant, sends the user back to the consent screen. The screen names the service and offers to log in to it.
+
+**Scope Alias**: An alternative name under which a provider reports a configured scope, such as the canonical URI Google returns for `email`. Configured on the service's scope and, for Google, built in for `userinfo.email` and `userinfo.profile`. Granted scopes are normalized to the configured scope value on connect and refresh, so grant and token-exchange scope checks compare configured values.
 
 **OAuth2StateToken**: A JWE-encrypted ephemeral token that binds an OAuth2 callback to the initiating request. Contains principal, PKCE verifier, service_id, and redirect_uri claims. Short-lived (10 min TTL, max 15 min per spec) to limit CSRF exposure. Uses authenticated encryption (A256GCMKW + A256GCM) for tamper detection.
 

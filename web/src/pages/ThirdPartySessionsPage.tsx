@@ -68,6 +68,11 @@ export const ThirdPartySessionsPage: React.FC = () => {
   const [refreshingServiceIds, setRefreshingServiceIds] = useState<Set<string>>(
     new Set(),
   );
+  // Services whose stored refresh token the provider just rejected. The stored session is kept
+  // unchanged on the server, so the page marks it for re-authentication locally.
+  const [rejectedServiceIds, setRejectedServiceIds] = useState<Set<string>>(
+    new Set(),
+  );
 
   /**
    * Map OAuth2 error codes to user-friendly messages.
@@ -189,6 +194,11 @@ export const ThirdPartySessionsPage: React.FC = () => {
     setTerminationError(null);
   };
 
+  const handleLogin = (serviceId: string) => {
+    const redirectURI = `${window.location.origin}/sessions`;
+    window.location.href = `/api/third-party/${encodeURIComponent(serviceId)}/oauth2/authorize?redirect_uri=${encodeURIComponent(redirectURI)}`;
+  };
+
   const handleRefresh = async (serviceId: string) => {
     try {
       setRefreshingServiceIds((prev) => new Set(prev).add(serviceId));
@@ -201,11 +211,22 @@ export const ThirdPartySessionsPage: React.FC = () => {
       });
     } catch (err) {
       console.error('Failed to refresh session token', err);
+      if ((err as { status?: number })?.status === 409) {
+        setRejectedServiceIds((prev) => new Set(prev).add(serviceId));
+        const serviceName =
+          sessions.find((s) => s.service_id === serviceId)
+            ?.service_display_name ?? 'The service';
+        setAlert({
+          type: 'error',
+          message: `${serviceName} no longer accepts the stored sign-in. Log in again to reconnect it.`,
+        });
+        return;
+      }
       setAlert({
         type: 'error',
         message: extractApiError(
           err,
-          'Failed to refresh session token. Please try again.',
+          'The service could not be reached. Please try again in a moment.',
         ),
       });
     } finally {
@@ -395,9 +416,14 @@ export const ThirdPartySessionsPage: React.FC = () => {
               {sessions.map((session) => (
                 <SessionCard
                   key={session.id}
-                  session={session}
+                  session={
+                    rejectedServiceIds.has(session.service_id)
+                      ? { ...session, reauth_required: true }
+                      : session
+                  }
                   onTerminate={handleTerminate}
                   onRefresh={handleRefresh}
+                  onLogin={handleLogin}
                   refreshing={refreshingServiceIds.has(session.service_id)}
                   loading={
                     terminatingLoading &&

@@ -229,15 +229,18 @@ func (r *PostgresUserSessionRepository) ListByPrincipal(ctx context.Context, pri
 	return sessions, nil
 }
 
-// ListActiveByPrincipal retrieves only non-expired sessions for a principal.
-// Used for FR-020 consent submission validation.
+// ListActiveByPrincipal retrieves only sessions that can still deliver an access token, matching
+// storage.UserSession.IsUsable. Used for FR-020 consent submission validation.
 func (r *PostgresUserSessionRepository) ListActiveByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error) {
 	if principal.IsZero() {
 		return nil, errors.New("principal required")
 	}
 
 	var records []*userSessionRecord
-	query := `SELECT * FROM user_sessions WHERE principal = $1 AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > NOW()) ORDER BY created_at DESC`
+	query := `SELECT * FROM user_sessions WHERE principal = $1
+		AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > NOW())
+		AND (access_token_expires_at IS NULL OR access_token_expires_at > NOW() OR octet_length(encrypted_refresh_token) > 0)
+		ORDER BY created_at DESC`
 
 	err := r.adapter.db.SelectContext(ctx, &records, query, principal)
 	if err != nil && err != sql.ErrNoRows {

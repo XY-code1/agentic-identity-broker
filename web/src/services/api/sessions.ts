@@ -34,7 +34,7 @@ export interface SessionSummary {
   /** Whether the entire session is expired */
   is_expired: boolean;
 
-  /** Whether the access token specifically is expired */
+  /** Whether the current access token is expired; refreshed transparently when a refresh token exists */
   access_token_expired: boolean;
 
   /** Whether a refresh token is stored for this session */
@@ -42,6 +42,9 @@ export interface SessionSummary {
 
   /** ISO 8601 timestamp when refresh token expires (if applicable) */
   refresh_token_expires_at?: string;
+
+  /** Whether the session can no longer deliver tokens and the user must log in again */
+  reauth_required: boolean;
 
   /** Number of agents depending on this session */
   dependent_agent_count: number;

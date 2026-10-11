@@ -234,7 +234,7 @@ func (s *Service) resolveServiceRequirements(ctx context.Context, agent *storage
 			DisplayName:     svc.DisplayName,
 			RequirementType: req.RequirementType,
 			RequiredScopes:  scopes,
-			IsConnected:     session != nil && !session.IsExpired(),
+			IsConnected:     session != nil && session.IsUsable(),
 		})
 	}
 
@@ -367,7 +367,7 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 			"previous_observed_granted_permission_sets", (&storage.UserGrant{GrantedPermissionSets: existingGrant.GrantedPermissionSets}).Copy().GrantedPermissionSets,
 		}
 		// Update existing grant (FR-013)
-		existingGrant.ValidUntil = req.ValidUntil
+		existingGrant.ValidUntil = utcTime(req.ValidUntil)
 		existingGrant.GrantedPermissionSets = req.GrantedPermissionSets
 		existingGrant.UpdatedAt = time.Now()
 
@@ -386,7 +386,7 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 			ID:                    id.NewGrantID(),
 			Principal:             req.Principal,
 			AgentID:               req.AgentID,
-			ValidUntil:            req.ValidUntil,
+			ValidUntil:            utcTime(req.ValidUntil),
 			GrantedPermissionSets: req.GrantedPermissionSets,
 			CreatedAt:             time.Now(),
 			UpdatedAt:             time.Now(),
@@ -419,6 +419,16 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 	s.logger.InfoContext(ctx, message, fields...)
 
 	return grant.Copy(), nil
+}
+
+// utcTime stores grant expiry as a UTC instant so every storage backend and every replica
+// compares it against the same moment, whatever offset the client sent.
+func utcTime(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	utc := t.UTC()
+	return &utc
 }
 
 func grantAuditValidUntil(validUntil *time.Time) any {

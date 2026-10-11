@@ -72,8 +72,9 @@ type OAuth2EndpointsRequest struct {
 
 // OAuthScopeRequest represents a scope in requests.
 type OAuthScopeRequest struct {
-	ScopeValue  string `json:"scope_value"`
-	Description string `json:"description"`
+	ScopeValue  string   `json:"scope_value"`
+	Description string   `json:"description"`
+	Aliases     []string `json:"aliases,omitempty"`
 }
 
 // ServiceResponse represents the response body for service operations.
@@ -110,8 +111,9 @@ type OAuth2EndpointsResponse struct {
 
 // OAuthScopeResponse represents a scope in responses.
 type OAuthScopeResponse struct {
-	ScopeValue  string `json:"scope_value"`
-	Description string `json:"description"`
+	ScopeValue  string   `json:"scope_value"`
+	Description string   `json:"description"`
+	Aliases     []string `json:"aliases,omitempty"`
 }
 
 func serviceClientAuthentication(req ServiceRequest) (model.TokenEndpointAuthMethod, model.Secret, error) {
@@ -197,7 +199,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 	// Convert scopes
 	entity.Scopes = make([]model.OAuthScope, len(req.Scopes))
 	for i, scope := range req.Scopes {
-		entity.Scopes[i] = model.OAuthScope{ScopeValue: scope.ScopeValue, Description: scope.Description}
+		entity.Scopes[i] = model.OAuthScope{ScopeValue: scope.ScopeValue, Description: scope.Description, Aliases: scope.Aliases}
 	}
 
 	if flavor != model.OAuth2FlavorGoogle && !req.Discovery.EnableDiscovery && req.Endpoints != nil {
@@ -378,7 +380,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 	// Convert scopes
 	entity.Scopes = make([]model.OAuthScope, len(req.Scopes))
 	for i, scope := range req.Scopes {
-		entity.Scopes[i] = model.OAuthScope{ScopeValue: scope.ScopeValue, Description: scope.Description}
+		entity.Scopes[i] = model.OAuthScope{ScopeValue: scope.ScopeValue, Description: scope.Description, Aliases: scope.Aliases}
 	}
 
 	if flavor != model.OAuth2FlavorGoogle && !req.Discovery.EnableDiscovery && req.Endpoints != nil {
@@ -593,6 +595,7 @@ func (h *ServicesHandler) toResponse(entity *model.ThirdpartyOAuth2ProviderEntit
 		scopes[i] = OAuthScopeResponse{
 			ScopeValue:  scope.ScopeValue,
 			Description: scope.Description,
+			Aliases:     scope.Aliases,
 		}
 	}
 

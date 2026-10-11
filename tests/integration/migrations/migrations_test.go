@@ -773,3 +773,59 @@ func TestMigration035PrivateKeyJWTAuthentication(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "true", strings.TrimSpace(legacyRowsPreserved), "migration replay must preserve legacy static and public services")
 }
+
+func TestMigration036UserGrantsTimestampTZ(t *testing.T) {
+	f := NewMigrationTestFramework(t)
+	defer f.Cleanup(t)
+
+	// Step 1: A grant written before migration 036 stores UTC wall-clock values.
+	require.NoError(t, f.Up(t, 35))
+	require.NoError(t, f.ExecuteSQL(t, `
+		INSERT INTO agents (id, display_name, description) VALUES ('36000000-0000-0000-0000-000000000001', 'tz agent', 'test');
+		INSERT INTO user_grants (id, principal, agent_id, valid_until, granted_permission_sets, created_at, updated_at)
+		VALUES ('36000000-0000-0000-0000-000000000002', 'tz@example.com', '36000000-0000-0000-0000-000000000001',
+			'2030-01-01 16:00:00', '[]', '2026-01-01 08:00:00', '2026-01-02 09:00:00');
+	`))
+
+	// Step 2: Migration 036 converts the columns and keeps the stored instants as UTC.
+	require.NoError(t, f.Up(t, 36))
+	version, dirty, err := f.Version(t)
+	require.NoError(t, err)
+	assert.Equal(t, uint(36), version)
+	assert.False(t, dirty)
+
+	types, err := f.QuerySQL(t, `
+		SELECT string_agg(column_name || '=' || data_type, ',' ORDER BY column_name)
+		FROM information_schema.columns
+		WHERE table_name = 'user_grants' AND column_name IN ('valid_until', 'created_at', 'updated_at');
+	`)
+	require.NoError(t, err)
+	assert.Equal(t, "created_at=timestamp with time zone,updated_at=timestamp with time zone,valid_until=timestamp with time zone", strings.TrimSpace(types))
+
+	preserved, err := f.QuerySQL(t, `
+		SELECT valid_until = TIMESTAMPTZ '2030-01-01 16:00:00+00'
+			AND created_at = TIMESTAMPTZ '2026-01-01 08:00:00+00'
+			AND updated_at = TIMESTAMPTZ '2026-01-02 09:00:00+00'
+		FROM user_grants WHERE id = '36000000-0000-0000-0000-000000000002';
+	`)
+	require.NoError(t, err)
+	assert.Equal(t, "true", strings.TrimSpace(preserved), "migration 036 must interpret existing values as UTC")
+
+	// Step 3: An offset-bearing expiry is stored as the same instant.
+	require.NoError(t, f.ExecuteSQL(t, `
+		UPDATE user_grants SET valid_until = '2030-01-01 18:00:00+02' WHERE id = '36000000-0000-0000-0000-000000000002';
+	`))
+	sameInstant, err := f.QuerySQL(t, `
+		SELECT valid_until = TIMESTAMPTZ '2030-01-01 16:00:00+00' FROM user_grants WHERE id = '36000000-0000-0000-0000-000000000002';
+	`)
+	require.NoError(t, err)
+	assert.Equal(t, "true", strings.TrimSpace(sameInstant))
+
+	// Step 4: The down migration restores TIMESTAMP columns holding UTC wall-clock values.
+	require.NoError(t, f.Down(t, 35))
+	restored, err := f.QuerySQL(t, `
+		SELECT valid_until = TIMESTAMP '2030-01-01 16:00:00' FROM user_grants WHERE id = '36000000-0000-0000-0000-000000000002';
+	`)
+	require.NoError(t, err)
+	assert.Equal(t, "true", strings.TrimSpace(restored))
+}

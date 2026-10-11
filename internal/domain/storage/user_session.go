@@ -127,6 +127,14 @@ func (s *UserSession) CanRefresh() bool {
 	return time.Now().Before(*s.RefreshTokenExpiresAt)
 }
 
+// IsUsable reports whether the session can keep delivering access tokens to agents: its refresh
+// token has not passed a recorded expiry (FR-002 marks such a session expired), and either the
+// access token is still valid or a refresh token can obtain a new one. The consent screen, the
+// grant submission gate and the authorization flow share this definition.
+func (s *UserSession) IsUsable() bool {
+	return !s.IsExpired() && (s.HasValidAccessToken() || s.CanRefresh())
+}
+
 // UserSessionSummary is a read model for displaying session information.
 // Includes computed fields like dependent agent count.
 type UserSessionSummary struct {
@@ -140,6 +148,7 @@ type UserSessionSummary struct {
 	AccessTokenExpired    bool         `json:"access_token_expired"`
 	HasRefreshToken       bool         `json:"has_refresh_token"`
 	RefreshTokenExpiresAt *time.Time   `json:"refresh_token_expires_at,omitempty"`
+	ReauthRequired        bool         `json:"reauth_required"`
 	DependentAgentCount   int          `json:"dependent_agent_count"`
 	IsEncrypted           bool         `json:"is_encrypted"` // Always true
 }
@@ -157,6 +166,7 @@ func NewUserSessionSummary(session *UserSession, serviceDisplayName string, agen
 		AccessTokenExpired:    !session.HasValidAccessToken(),
 		HasRefreshToken:       len(session.EncryptedRefreshToken) > 0,
 		RefreshTokenExpiresAt: session.RefreshTokenExpiresAt,
+		ReauthRequired:        !session.IsUsable(),
 		DependentAgentCount:   agentCount,
 		IsEncrypted:           true,
 	}

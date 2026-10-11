@@ -1,0 +1,4 @@
+ALTER TABLE user_grants
+    ALTER COLUMN valid_until TYPE TIMESTAMP USING valid_until AT TIME ZONE 'UTC',
+    ALTER COLUMN created_at TYPE TIMESTAMP USING created_at AT TIME ZONE 'UTC',
+    ALTER COLUMN updated_at TYPE TIMESTAMP USING updated_at AT TIME ZONE 'UTC';

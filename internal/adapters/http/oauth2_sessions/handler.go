@@ -606,6 +606,12 @@ func (h *Handler) RefreshSession(w http.ResponseWriter, r *http.Request) {
 				"error":   "not_found",
 				"message": "session not found",
 			})
+		case errors.Is(err, oauth2session.ErrRefreshRejected), errors.Is(err, oauth2session.ErrRefreshTokenExpired):
+			h.logger.Warn("force refresh requires re-authentication",
+				"principal", principalValue,
+				"service_id", serviceIDStr,
+				"error", err)
+			writeJSONError(w, http.StatusConflict, "refresh_rejected", "the stored refresh token is no longer accepted; log in to the service again")
 		case errors.Is(err, oauth2session.ErrRefreshNotAvailable):
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)

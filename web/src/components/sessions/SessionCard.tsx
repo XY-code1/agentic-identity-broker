@@ -5,12 +5,13 @@
  * Follows the "Refined Trust Architecture" design system.
  *
  * Features:
- * - Session status badge (Active, Expiring Soon, Access Token Expired, Expired)
+ * - Session status badge (Active, Expiring Soon, Expired). An expired access token alone
+ *   stays Active because the broker refreshes it transparently (FR-002).
  * - Encryption indicator
  * - Dependent agent count
  * - Session initiation timestamp
  * - OAuth2 scopes display
- * - Refresh and Terminate actions
+ * - Refresh and Terminate actions, or Login when re-authentication is required
  * - WCAG 2.1 AA compliant
  */
 
@@ -31,6 +32,8 @@ interface SessionCardProps {
   onViewDetails?: (serviceId: string) => void;
   /** Callback when user clicks the refresh button (force token refresh) */
   onRefresh?: (serviceId: string) => void;
+  /** Callback when user clicks Login to re-authenticate an expired session */
+  onLogin?: (serviceId: string) => void;
   /** Whether the refresh action is currently loading for this card */
   refreshing?: boolean;
   /** Whether card actions are currently loading */
@@ -55,16 +58,16 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   onTerminate,
   onViewDetails,
   onRefresh,
+  onLogin,
   refreshing = false,
   loading = false,
 }) => {
+  const needsReauth = session.is_expired || session.reauth_required;
+
   // Determine status and color variant
   const { status, variant } = useMemo(() => {
-    if (session.is_expired) {
+    if (needsReauth) {
       return { status: 'Expired', variant: 'error' as const };
-    }
-    if (session.access_token_expired) {
-      return { status: 'Access Token Expired', variant: 'warning' as const };
     }
 
     // Check if expiring soon (within 7 days)
@@ -78,7 +81,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
     }
 
     return { status: 'Active', variant: 'success' as const };
-  }, [session]);
+  }, [needsReauth, session.refresh_token_expires_at]);
 
   // Format initiation date using the user's browser locale
   const initiatedDate = useMemo(() => {
@@ -124,7 +127,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
               View Details
             </Button>
           )}
-          {onRefresh && session.has_refresh_token && (
+          {onRefresh && session.has_refresh_token && !needsReauth && (
             <Button
               variant="secondary"
               size="sm"
@@ -136,7 +139,18 @@ export const SessionCard: React.FC<SessionCardProps> = ({
               Refresh
             </Button>
           )}
-          {!session.is_expired && (
+          {needsReauth && onLogin && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => onLogin(session.service_id)}
+              disabled={loading || refreshing}
+              className="flex-shrink-0"
+            >
+              Login
+            </Button>
+          )}
+          {!needsReauth && (
             <Button
               variant="danger"
               size="sm"
@@ -156,9 +170,9 @@ export const SessionCard: React.FC<SessionCardProps> = ({
         <Badge variant={variant} showDot>
           {status}
         </Badge>
-        {session.is_expired && (
+        {needsReauth && (
           <p className="m-0 text-xs font-medium text-error-primary">
-            Re-authenticate required
+            Re-authentication required
           </p>
         )}
       </div>

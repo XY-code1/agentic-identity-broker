@@ -51,6 +51,7 @@ A privileged client (API gateway or reverse proxy) needs to exchange a token iss
 6. **Given** privileged client sends request with invalid or expired subject_token, **When** system validates request, **Then** system returns 400 Bad Request with error=invalid_grant and a credential-free description; diagnostic outcome is authentication_failed at subject_validation
 7. **Given** stored third-party access_token expires within the refresh leeway window (`third_party_oauth2.refresh_leeway`, default 30 seconds), **When** system processes exchange and a usable refresh_token exists, **Then** system refreshes proactively and returns a token whose remaining lifetime exceeds the leeway; if the proactive refresh fails while the stored token is still unexpired, system returns the stored token
 8. **Given** the third-party token endpoint encodes `expires_in` as a JSON string, **When** system refreshes the token, **Then** system accepts the value and records the expiry
+9. **Given** the third-party refresh response returns `scope` (RFC 6749 §6), **When** system stores the refreshed tokens, **Then** the session scope is replaced with the returned scope, normalized to the configured scope values
 
 ---
 

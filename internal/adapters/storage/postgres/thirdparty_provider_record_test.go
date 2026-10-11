@@ -304,3 +304,22 @@ func TestProviderScopeArray_JSONSnakeCaseKeys(t *testing.T) {
 	assert.Equal(t, "Read access", raw[0]["description"])
 	assert.Empty(t, raw[0]["ScopeValue"], "PascalCase key must not exist")
 }
+
+func TestProviderScopeArray_RoundTripsAliases(t *testing.T) {
+	original := providerScopeArray{
+		{ScopeValue: "email", Description: "Email", Aliases: []string{"https://www.googleapis.com/auth/userinfo.email"}},
+		{ScopeValue: "openid", Description: "OpenID"},
+	}
+	value, err := original.Value()
+	require.NoError(t, err)
+	encoded, ok := value.([]byte)
+	require.True(t, ok)
+	assert.JSONEq(t, `[
+		{"scope_value":"email","description":"Email","aliases":["https://www.googleapis.com/auth/userinfo.email"]},
+		{"scope_value":"openid","description":"OpenID"}
+	]`, string(encoded))
+
+	var decoded providerScopeArray
+	require.NoError(t, decoded.Scan(encoded))
+	assert.Equal(t, original, decoded)
+}

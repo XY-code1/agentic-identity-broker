@@ -58,3 +58,51 @@ func TestUserSessionRefreshPersistsRefreshExpiryAndScope(t *testing.T) {
 	assert.WithinDuration(t, newRefreshExpiry, *persisted.RefreshTokenExpiresAt, time.Second)
 	assert.Equal(t, []string{"repo"}, persisted.Scope, "scope narrowed on refresh must be committed")
 }
+
+// Regression: the SQL active filter only checks refresh_token_expires_at, which most providers
+// never populate. A session with an expired access token and no refresh token therefore passes
+// the consent submission gate (FR-020) although no agent can obtain a token from it.
+func TestUserSessionListActiveExcludesSessionsThatCannotDeliverTokens(t *testing.T) {
+	adapter, cleanup := setupUserSessionTestDB(t)
+	defer cleanup()
+	repo := NewUserSessionRepository(adapter)
+	ctx := context.Background()
+	principal := id.Principal("active-filter@example.com")
+	expired := time.Now().UTC().Add(-time.Hour)
+	valid := time.Now().UTC().Add(time.Hour)
+
+	usable, refreshable, dead, refreshExpired := id.NewServiceID(), id.NewServiceID(), id.NewServiceID(), id.NewServiceID()
+	for _, serviceID := range []id.ServiceID{usable, refreshable, dead, refreshExpired} {
+		insertTestService(t, adapter, serviceID)
+	}
+	base := func(serviceID id.ServiceID) *storage.UserSession {
+		return &storage.UserSession{
+			ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID,
+			EncryptedAccessToken: []byte("access"), TokenType: "Bearer", Scope: []string{"repo"},
+			EncryptionContext: storage.EncryptionContext{ServiceID: serviceID},
+			InitiatedAt:       time.Now().UTC(), CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		}
+	}
+	s1 := base(usable)
+	s1.AccessTokenExpiresAt = &valid
+	s2 := base(refreshable)
+	s2.AccessTokenExpiresAt = &expired
+	s2.EncryptedRefreshToken = []byte("refresh")
+	s3 := base(dead)
+	s3.AccessTokenExpiresAt = &expired
+	s4 := base(refreshExpired)
+	s4.AccessTokenExpiresAt = &expired
+	s4.EncryptedRefreshToken = []byte("refresh")
+	s4.RefreshTokenExpiresAt = &expired
+	for _, session := range []*storage.UserSession{s1, s2, s3, s4} {
+		require.NoError(t, repo.Create(ctx, session))
+	}
+
+	active, err := repo.ListActiveByPrincipal(ctx, principal)
+	require.NoError(t, err)
+	activeIDs := make([]id.ServiceID, 0, len(active))
+	for _, session := range active {
+		activeIDs = append(activeIDs, session.ServiceID)
+	}
+	assert.ElementsMatch(t, []id.ServiceID{usable, refreshable}, activeIDs)
+}

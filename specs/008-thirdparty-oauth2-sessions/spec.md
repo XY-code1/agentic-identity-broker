@@ -32,6 +32,7 @@ A user needs to see which third-party services have active sessions with the ide
 4. **Given** user views an established session, **When** reviewing the service card, **Then** system shows a "Terminate Session" button
 5. **Given** multiple agents depend on a session, **When** user views the session card, **Then** system displays the count of dependent agents
 6. **Given** user has an established session where refresh token has expired, **When** viewing the service card, **Then** system displays session with "Expired" status indicator and user must terminate and re-authenticate to establish new session. To re-authenticate show a login button instead of the Terminate button.
+7. **Given** user has an established session whose access token has expired but whose refresh token is still usable, **When** viewing the service card, **Then** system displays the session as "Active" (auto-refresh is transparent) and never as expired; **Given** the access token has expired and no usable refresh token exists, **Then** the card shows "Expired" with "Re-authentication required" and a Login button instead of Terminate
 
 ---
 
@@ -56,6 +57,7 @@ A user needs to authenticate with a third-party service by initiating an OAuth2 
 9. **Given** token exchange request fails due to network error, **When** system attempts token exchange, **Then** system retries up to 3 times with exponential backoff (1s, 2s, 4s), and if all retries fail, displays error message allowing user to restart OAuth2 flow
 10. **Given** a session with a stored refresh token exists, **When** the user re-connects the same service and the provider's token response omits `refresh_token` (Google without `prompt=consent`, Microsoft, Okta), **Then** system replaces the access token, keeps the previously stored refresh token and its recorded expiry, and the session remains refreshable
 11. **Given** the provider's token response advertises the refresh-token lifetime (`refresh_expires_in` or `refresh_token_expires_in`, as a number or numeric string; `0` means no expiry), **When** system stores or refreshes the session, **Then** system records `refresh_token_expires_at` from that value so the sessions page can warn before the refresh token dies
+12. **Given** the provider returns scopes under canonical aliases of the configured scope values (for example Google's `https://www.googleapis.com/auth/userinfo.email` for `email`, or an alias the administrator configured on the scope), **When** system stores the session scope on connect or refresh, **Then** the configured scope values are recorded so grant and token-exchange scope checks match
 
 ---
 
@@ -74,6 +76,7 @@ A user needs to revoke their session with a third-party service, which removes s
 3. **Given** session is terminated, **When** user returns to sessions page, **Then** service card shows "Login" button again with no session status indicators
 4. **Given** agents previously used a terminated session, **When** those agents attempt to use the session, **Then** agents detect missing session and must request user to re-authenticate
 5. **Given** user cancels termination in warning dialog, **When** dialog is dismissed, **Then** session remains active and no changes are made
+6. **Given** user clicks Refresh on a session card, **When** the provider rejects the stored refresh token (`invalid_grant`) or the recorded refresh-token expiry has passed, **Then** `POST /api/third-party/{serviceId}/session/refresh` returns 409 `refresh_rejected` and the page asks the user to log in again; only a provider outage returns 502 `refresh_failed`
 
 ---
 

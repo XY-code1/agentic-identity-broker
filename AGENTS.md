@@ -156,6 +156,7 @@ Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. 
 | **UserGrant** | User delegation of permission sets to an agent. One per user-agent pair. |
 | **AuthorizationSessionClaims** | JWE-sealed authorization context with a 10-minute TTL. |
 | **UserSession** | Authenticated OAuth2 session with encrypted tokens. |
+| **Usable Session** | Session whose refresh token is not expired and that has a valid access token or a usable refresh token (`UserSession.IsUsable`). |
 | **Principal** | Authenticated user ID from `X-Remote-User`. |
 | **Secret** | Value object with exclusive plaintext or encrypted state. |
 | **ServiceRequirement** | Agent requirement for a mandatory or optional service. |

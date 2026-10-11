@@ -991,6 +991,73 @@ var _ = Describe("Agent Permission Requirements", func() {
 			Expect(gistScope).To(HaveKey("description"))
 			Expect(gistScope["description"]).To(Equal("Manage gists"))
 		})
+
+		// Scenario 7: spec.md User Story 3, Scenario 7
+		// Spec: A session that cannot deliver tokens is shown as not connected
+		It("should report a session without usable tokens as not connected", func() {
+			// Given: The user's GitHub session has an expired access token and no refresh token
+			session := fixtures.SessionWithoutRefreshToken(userPrincipal, githubService.ID.String())
+			expired := time.Now().Add(-time.Minute)
+			session.AccessTokenExpiresAt = &expired
+			session.Scope = []string{"repo", "user:email"}
+			Expect(testStorage.UserSessions().Create(context.Background(), session)).To(Succeed())
+
+			// When: User requests consent endpoint
+			resp, err := enduserServer.AuthenticatedGET(fmt.Sprintf("/api/consent/agents/%s", agent.ID), userPrincipal)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			responseBody, err := readJSONResponse(resp)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Then: The service offers login instead of showing an active session
+			service := responseBody["data"].(map[string]interface{})["services"].([]interface{})[0].(map[string]interface{})
+			Expect(service["connectionStatus"]).To(Equal("not_connected"))
+		})
+
+		// Scenario 8: spec.md User Story 3, Scenario 8
+		// Spec: A consent redirect caused by a service connection names the service and reason
+		DescribeTable("should name the service and reason when a connection sends the user to consent",
+			func(sessionState func() *storage.UserSession, wantReason string) {
+				// Given: The user granted the agent's declared permission set, covering GitHub
+				grant := &storage.UserGrant{
+					Principal:             id.Principal(userPrincipal),
+					AgentID:               agent.ID,
+					GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: fixtures.PlaceholderPermissionSetID, IncludedServiceIDs: []id.ServiceID{githubService.ID}}},
+				}
+				Expect(testStorage.UserGrants().Create(context.Background(), grant)).To(Succeed())
+				if session := sessionState(); session != nil {
+					Expect(testStorage.UserSessions().Create(context.Background(), session)).To(Succeed())
+				}
+
+				// When: The agent starts an authorization request
+				resp, err := enduserServer.AuthenticatedGET(
+					fmt.Sprintf("/oauth2/authorize?client_id=%s&redirect_uri=https://client.example.com/cb&response_type=code", agent.ID),
+					userPrincipal,
+				)
+				Expect(err).ToNot(HaveOccurred())
+				defer func() { _ = resp.Body.Close() }()
+
+				// Then: The consent redirect carries the reason and the service
+				Expect(resp.StatusCode).To(Equal(http.StatusFound))
+				location, err := url.Parse(resp.Header.Get("Location"))
+				Expect(err).ToNot(HaveOccurred())
+				Expect(location.Path).To(Equal("/agents/" + agent.ID.String()))
+				Expect(location.Query().Get("session_token")).ToNot(BeEmpty())
+				Expect(location.Query().Get("reason")).To(Equal(wantReason))
+				Expect(location.Query().Get("service_id")).To(Equal(githubService.ID.String()))
+			},
+			Entry("mandatory service without a session", func() *storage.UserSession { return nil }, "session_required"),
+			Entry("session that can no longer deliver tokens", func() *storage.UserSession {
+				session := fixtures.SessionWithoutRefreshToken(userPrincipal, githubService.ID.String())
+				expired := time.Now().Add(-time.Minute)
+				session.AccessTokenExpiresAt = &expired
+				session.Scope = []string{"repo", "user:email"}
+				return session
+			}, "session_expired"),
+			Entry("session lacking required scopes", func() *storage.UserSession {
+				return fixtures.SessionForServiceWithScopes(userPrincipal, githubService.ID.String(), []string{"repo"})
+			}, "scope_mismatch"),
+		)
 	})
 
 	// ===========================================================================

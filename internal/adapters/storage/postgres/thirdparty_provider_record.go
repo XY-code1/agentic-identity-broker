@@ -50,8 +50,9 @@ type providerScopeArray []model.OAuthScope
 // scopeJSON is an intermediate struct for JSON serialization with snake_case keys,
 // since model.OAuthScope intentionally has no json tags.
 type scopeJSON struct {
-	ScopeValue  string `json:"scope_value"`
-	Description string `json:"description"`
+	ScopeValue  string   `json:"scope_value"`
+	Description string   `json:"description"`
+	Aliases     []string `json:"aliases,omitempty"`
 }
 
 // Scan implements sql.Scanner for JSONB deserialization of OAuthScope arrays.
@@ -76,6 +77,7 @@ func (a *providerScopeArray) Scan(value any) error {
 		scopes[i] = model.OAuthScope{
 			ScopeValue:  r.ScopeValue,
 			Description: r.Description,
+			Aliases:     r.Aliases,
 		}
 	}
 	*a = scopes
@@ -92,6 +94,7 @@ func (a providerScopeArray) Value() (driver.Value, error) {
 		raw[i] = scopeJSON{
 			ScopeValue:  scope.ScopeValue,
 			Description: scope.Description,
+			Aliases:     scope.Aliases,
 		}
 	}
 	return json.Marshal(raw)

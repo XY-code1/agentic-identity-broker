@@ -511,8 +511,9 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			previousRefresh := append([]byte(nil), before.EncryptedRefreshToken...)
 			upstream.WithErrorResponse("invalid_grant")
 
+			// invalid_grant surfaces as 409 refresh_rejected (specs/008 US3-S6).
 			response := refresh(serviceID)
-			Expect(response.StatusCode).To(Equal(http.StatusBadGateway))
+			Expect(response.StatusCode).To(Equal(http.StatusConflict))
 			Expect(response.Body.Close()).To(Succeed())
 			credentialFreeTokenRequests(upstream)
 			after, err := testStorage.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(principal), serviceID)

@@ -2921,6 +2921,20 @@ components:
           description: OAuth2 scope value used in authorization requests
           example: repo
           minLength: 1
+        aliases:
+          type: array
+          description: >-
+            Other names under which the provider may report this scope in a token response,
+            for example the canonical URI a provider returns for a short scope name. Granted
+            scopes are stored under scope_value. Each alias must be unique across the service.
+            Google services also map the userinfo.email and userinfo.profile URIs to email and
+            profile automatically.
+          items:
+            type: string
+            minLength: 1
+            pattern: '^\S+$'
+          example:
+            - https://www.googleapis.com/auth/userinfo.email
         description:
           type: string
           description: Human-readable description of what this scope allows
@@ -2938,6 +2952,20 @@ components:
           description: OAuth2 scope value used in authorization requests
           example: repo
           minLength: 1
+        aliases:
+          type: array
+          description: >-
+            Other names under which the provider may report this scope in a token response,
+            for example the canonical URI a provider returns for a short scope name. Granted
+            scopes are stored under scope_value. Each alias must be unique across the service.
+            Google services also map the userinfo.email and userinfo.profile URIs to email and
+            profile automatically.
+          items:
+            type: string
+            minLength: 1
+            pattern: '^\S+$'
+          example:
+            - https://www.googleapis.com/auth/userinfo.email
         description:
           type: string
           description: Human-readable description of what this scope allows

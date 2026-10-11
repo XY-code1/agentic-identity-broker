@@ -2290,7 +2290,7 @@ func TestService_GrantConsentReturnsWinningUpsertMetadata(t *testing.T) {
 	assert.NotSame(t, repo.grants[winningID].ValidUntil, grant.ValidUntil)
 	*grant.ValidUntil = grant.ValidUntil.Add(time.Hour)
 	grant.GrantedPermissionSets[0].IncludedServiceIDs[0] = id.NewServiceID()
-	assert.Equal(t, validUntil, *repo.grants[winningID].ValidUntil)
+	assert.True(t, validUntil.Equal(*repo.grants[winningID].ValidUntil), "stored expiry must be the requested instant")
 	assert.Equal(t, serviceID, repo.grants[winningID].GrantedPermissionSets[0].IncludedServiceIDs[0])
 }
 

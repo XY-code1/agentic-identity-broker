@@ -873,4 +873,43 @@ describe('AgentGrantDetailPage - CIMD session_token flow', () => {
     expect(cimdParagraph).toBeInTheDocument();
     expect(cimdParagraph.textContent).toContain('Research Assistant');
   });
+
+  describe('consent redirect reason (specs/011 US3-S8)', () => {
+    const agentLoaded = () =>
+      vi.spyOn(useAgentGrantsModule, 'useAgentGrants').mockReturnValue({
+        agent: mockAgent,
+        services: mockServices,
+        cimdMeta: null,
+        grants: mockGrant,
+        loading: false,
+        error: null,
+        sessionExpired: false,
+        refetch: vi.fn(),
+      });
+
+    it('names the service whose connection expired', () => {
+      agentLoaded();
+      render(
+        <MemoryRouterWrapper initialEntry="/agents/agent-123?session_token=t&reason=session_expired&service_id=github">
+          <AgentGrantDetailPage />
+        </MemoryRouterWrapper>,
+      );
+
+      expect(screen.getByText('Connection expired')).toBeInTheDocument();
+      expect(screen.getByText(/connection to GitHub has expired/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Log in to GitHub' })).toBeInTheDocument();
+    });
+
+    it('ignores unknown reasons', () => {
+      agentLoaded();
+      render(
+        <MemoryRouterWrapper initialEntry="/agents/agent-123?reason=other&service_id=github">
+          <AgentGrantDetailPage />
+        </MemoryRouterWrapper>,
+      );
+
+      expect(screen.queryByText('Connection expired')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Log in to GitHub' })).not.toBeInTheDocument();
+    });
+  });
 });

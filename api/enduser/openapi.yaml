@@ -1169,16 +1169,26 @@ paths:
                 error: not_found
                 message: session not found
         "409":
-          description: No valid refresh token available for this session
+          description: |
+            The session cannot be refreshed and the user must log in to the service again.
+            `refresh_unavailable` means no refresh token is stored. `refresh_rejected` means the
+            provider rejected the stored refresh token (`invalid_grant`) or its recorded expiry
+            has passed.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-              example:
-                error: refresh_unavailable
-                message: no valid refresh token available for this session
+              examples:
+                refresh_unavailable:
+                  value:
+                    error: refresh_unavailable
+                    message: no valid refresh token available for this session
+                refresh_rejected:
+                  value:
+                    error: refresh_rejected
+                    message: the stored refresh token is no longer accepted; log in to the service again
         "502":
-          description: Third-party provider rejected the refresh request
+          description: The third-party provider was unavailable or answered with an error that is not a token rejection
           content:
             application/json:
               schema:
@@ -1262,6 +1272,13 @@ paths:
         - If user has an active grant, redirects to `redirect_uri` with `code` and `state`
         - If no active grant exists, redirects to the consent UI for user approval
         - Supports PKCE (RFC 7636) with `code_challenge` and `code_challenge_method`
+
+        **Consent redirect reasons** (all modes):
+        When a service connection, not the grant itself, sends the user to the consent UI
+        (`/agents/{agentId}?session_token=...`), the redirect also carries `reason` and
+        `service_id`. `reason` is `session_required` (a mandatory service has no session),
+        `session_expired` (a delegated or mandatory service's session can no longer deliver
+        tokens) or `scope_mismatch` (a mandatory service's session lacks required scopes).
 
         **Proxy Mode**:
         When proxying to an upstream OAuth2 server:
@@ -3629,6 +3646,7 @@ components:
         - is_expired
         - access_token_expired
         - has_refresh_token
+        - reauth_required
         - dependent_agent_count
         - is_encrypted
       properties:
@@ -3651,14 +3669,24 @@ components:
           format: date-time
         is_expired:
           type: boolean
+          description: The refresh token has passed its recorded expiry. The user must log in again.
         access_token_expired:
           type: boolean
+          description: >-
+            The current access token has expired. With a usable refresh token the broker
+            refreshes it transparently, so this alone does not mean the session is unusable.
         has_refresh_token:
           type: boolean
         refresh_token_expires_at:
           type: string
           format: date-time
           nullable: true
+        reauth_required:
+          type: boolean
+          description: >-
+            The session can no longer deliver access tokens to agents: the refresh token has
+            expired, or the access token has expired and no refresh token is stored. The user
+            must log in to the service again.
         dependent_agent_count:
           type: integer
           minimum: 0

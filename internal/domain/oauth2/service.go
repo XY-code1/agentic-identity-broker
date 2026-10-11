@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"slices"
 	"strings"
@@ -271,9 +272,9 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		return ports.ConsentDecision(consentURL), nil
 	}
 
-	// Step 4: Check that sessions for all delegated services are not expired.
+	// Step 4: Check that every delegated service still has a session that can deliver tokens.
 	// Only sessions whose service ID is included in the grant's permission sets are checked.
-	expired, err := s.anyDelegatedSessionExpired(ctx, principal, grant.GrantedPermissionSets)
+	unusable, err := s.firstUnusableDelegatedSession(ctx, principal, grant.GrantedPermissionSets)
 	if err != nil {
 		errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "server error")
 		if buildURLErr != nil && s.logger != nil {
@@ -286,15 +287,20 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 			RedirectURL: errRedirect,
 		}, nil
 	}
-	if expired {
+	if unusable != nil {
 		if s.logger != nil {
 			s.logger.Warn(
 				"DelegatedSessionExpired",
 				"agent_id", agent.ID,
 				"principal", principal,
+				"service_id", unusable.ServiceID,
+				"reason", unusable.Reason,
 			)
 		}
 		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
+		if buildErr == nil {
+			consentURL, buildErr = withConsentReason(consentURL, unusable)
+		}
 		if buildErr != nil {
 			if s.logger != nil {
 				s.logger.Error("failed to build consent URL", "error", buildErr)
@@ -345,6 +351,10 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 				)
 			}
 			consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
+			var requirementErr *ConsentRedirectReason
+			if buildErr == nil && errors.As(err, &requirementErr) {
+				consentURL, buildErr = withConsentReason(consentURL, requirementErr)
+			}
 			if buildErr != nil {
 				if s.logger != nil {
 					s.logger.Error("failed to build consent URL", "error", buildErr)
@@ -543,37 +553,34 @@ func (s *AuthorizationService) GenerateMetadata(ctx context.Context) (*ports.Met
 	return metadata, nil
 }
 
-// anyDelegatedSessionExpired returns true if any OAuth2 session relevant to the
-// grant's permission sets has expired. Only sessions whose service ID appears in
-// the IncludedServiceIDs of a granted permission set entry are checked, preventing
-// false-positive consent redirects caused by unrelated expired sessions.
-func (s *AuthorizationService) anyDelegatedSessionExpired(ctx context.Context, principal id.Principal, grantEntries []storage.GrantedPermissionSetEntry) (bool, error) {
-	// Build the set of service IDs covered by the grant's permission sets.
-	relevantServices := make(map[id.ServiceID]bool)
+// firstUnusableDelegatedSession returns the reason for the first service covered by the grant's
+// permission sets whose session can no longer deliver tokens. Services are checked
+// in a stable order so the consent screen names the same service on every redirect. Sessions of
+// services outside the grant never trigger a consent redirect.
+func (s *AuthorizationService) firstUnusableDelegatedSession(ctx context.Context, principal id.Principal, grantEntries []storage.GrantedPermissionSetEntry) (*ConsentRedirectReason, error) {
+	relevantServices := make(map[id.ServiceID]struct{})
 	for _, entry := range grantEntries {
 		for _, svcID := range entry.IncludedServiceIDs {
-			relevantServices[svcID] = true
+			relevantServices[svcID] = struct{}{}
 		}
 	}
+	serviceIDs := slices.SortedFunc(maps.Keys(relevantServices), func(a, b id.ServiceID) int {
+		return strings.Compare(a.String(), b.String())
+	})
 
-	// If no services are referenced, nothing can be expired.
-	if len(relevantServices) == 0 {
-		return false, nil
-	}
-
-	// Use per-service lookup so we see expired sessions. ListByPrincipal filters
-	// to active-only (for FR-020); FindByPrincipalAndService returns all sessions
-	// including expired ones, which is exactly what expiry detection requires.
-	for svcID := range relevantServices {
+	// FindByPrincipalAndService returns unusable sessions too, which this check must see.
+	for _, svcID := range serviceIDs {
 		session, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, svcID)
 		if err != nil {
-			return false, fmt.Errorf("failed to find session for service %s: %w", svcID, err)
+			return nil, fmt.Errorf("failed to find session for service %s: %w", svcID, err)
 		}
-		if session != nil && session.IsExpired() {
-			return true, nil
+		// A missing session does not redirect: the grant may predate the connection, and
+		// token exchange reports session_missing with the sessions page as recovery target.
+		if session != nil && !session.IsUsable() {
+			return &ConsentRedirectReason{Reason: ConsentReasonSessionExpired, ServiceID: svcID}, nil
 		}
 	}
-	return false, nil
+	return nil, nil
 }
 
 // validateMandatoryRequirements checks that user has active sessions for all mandatory services
@@ -612,11 +619,11 @@ func (s *AuthorizationService) validateMandatoryRequirements(
 					"reason", "session_not_found",
 				)
 			}
-			return fmt.Errorf("session_required: user does not have required session for service %s", req.ServiceID)
+			return &ConsentRedirectReason{Reason: ConsentReasonSessionRequired, ServiceID: req.ServiceID}
 		}
 
-		// Check if session is expired
-		if session.IsExpired() {
+		// A session that can no longer deliver tokens is as good as missing.
+		if !session.IsUsable() {
 			if s.logger != nil {
 				s.logger.Warn(
 					"MandatoryRequirementNotMet",
@@ -625,7 +632,7 @@ func (s *AuthorizationService) validateMandatoryRequirements(
 					"reason", "session_expired",
 				)
 			}
-			return fmt.Errorf("session_expired: user session has expired for service %s", req.ServiceID)
+			return &ConsentRedirectReason{Reason: ConsentReasonSessionExpired, ServiceID: req.ServiceID}
 		}
 
 		// Check if session scopes include all required scopes (superset check)
@@ -640,7 +647,7 @@ func (s *AuthorizationService) validateMandatoryRequirements(
 					"actual_scopes", session.Scope,
 				)
 			}
-			return fmt.Errorf("scope_mismatch: user session lacks required scopes for service %s", req.ServiceID)
+			return &ConsentRedirectReason{Reason: ConsentReasonScopeMismatch, ServiceID: req.ServiceID}
 		}
 	}
 

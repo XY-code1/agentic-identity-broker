@@ -759,19 +759,9 @@ func (s *OAuth2SessionService) HandleCallback(
 		s.auditCIMDTokenAcquisition(service.ID, "code_exchange", "success")
 	}
 
-	// Extract scopes from token response or fall back to service scopes.
-	// GitHub returns scopes as comma-separated; use the flavor's separator.
-	scopes := make([]string, 0)
-	if scopeVal := token.Extra("scope"); scopeVal != nil {
-		if scopeStr, ok := scopeVal.(string); ok && scopeStr != "" {
-			separator := service.Flavor.ScopeSeparator()
-			for _, s := range strings.Split(scopeStr, separator) {
-				if trimmed := strings.TrimSpace(s); trimmed != "" {
-					scopes = append(scopes, trimmed)
-				}
-			}
-		}
-	}
+	// Record the granted scope under the configured scope values, or fall back to the
+	// configured scopes when the provider does not report one.
+	scopes := grantedScopes(service, token)
 	if len(scopes) == 0 {
 		// Fall back to service scopes
 		for _, scope := range service.Scopes {
@@ -1541,8 +1531,28 @@ func (s *OAuth2SessionService) refreshSessionTokens(ctx context.Context, session
 		s.logger.ErrorContext(ctx, "failed to update session with refreshed tokens", "service_id", serviceID, "oauth2_session", sessionFailureMetadata(err))
 		return err
 	}
+	// RFC 6749 §6: a refresh response may narrow the granted scope; without one it is unchanged.
+	if scopes := grantedScopes(service, newToken); len(scopes) > 0 {
+		session.Scope = scopes
+	}
 
 	return nil
+}
+
+// grantedScopes parses the scope a token response reports, using the provider's separator
+// (GitHub uses commas), and normalizes it to the configured scope values.
+func grantedScopes(service *model.ThirdpartyOAuth2ProviderEntity, token *oauth2.Token) []string {
+	scopeStr, _ := token.Extra("scope").(string)
+	if scopeStr == "" {
+		return nil
+	}
+	var reported []string
+	for _, scope := range strings.Split(scopeStr, service.Flavor.ScopeSeparator()) {
+		if trimmed := strings.TrimSpace(scope); trimmed != "" {
+			reported = append(reported, trimmed)
+		}
+	}
+	return service.NormalizeGrantedScopes(reported)
 }
 
 func (s *OAuth2SessionService) logRefreshSuccess(ctx context.Context, serviceID id.ServiceID, service *model.ThirdpartyOAuth2ProviderEntity) {

@@ -74,6 +74,8 @@ When a user is directed to the consent screen for an agent, the UI must clearly 
 4. **Given** an agent has mandatory services, **When** displaying service requirements, **Then** mandatory services are listed before optional services in the UI
 5. **Given** a mandatory service where the user lacks an active session, **When** the consent screen renders, **Then** the service shows a clear call-to-action to establish the required session (login button)
 6. **Given** a mandatory service where the user has an active session with all required scopes, **When** the consent screen renders, **Then** the service shows a "Active Session" status indicator
+7. **Given** a session whose access token has expired without a usable refresh token, or whose refresh token has expired, **When** the consent screen renders, **Then** the service is shown as not connected with the login call-to-action, because no agent can obtain a token from that session
+8. **Given** an authorization request is redirected to the consent screen because a mandatory service has no session, a session that cannot deliver tokens, or a session lacking required scopes, **When** the consent screen renders, **Then** the redirect carries `reason` (`session_required`, `session_expired` or `scope_mismatch`) and `service_id`, and the screen names the service, explains the reason and offers to log in to it
 
 ---
 
