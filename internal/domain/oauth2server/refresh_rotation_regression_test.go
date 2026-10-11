@@ -7,6 +7,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 )
@@ -119,4 +122,42 @@ func TestProvider_RefreshTokens_ConcurrentPresentationsDoNotRevokeWinner(t *test
 	next, err := provider.HandleRefreshToken(ctx, clientID, secret, winner, "")
 	require.NoError(t, err, "the winner's refresh token must survive the loser's retry")
 	assert.NotEmpty(t, next.AccessToken)
+}
+
+func TestProvider_RefreshTokens_GraceReplayIsCounted(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	previous := otel.GetMeterProvider()
+	otel.SetMeterProvider(meterProvider)
+	t.Cleanup(func() {
+		otel.SetMeterProvider(previous)
+		_ = meterProvider.Shutdown(context.Background())
+	})
+
+	provider, clientID, secret, initialRefresh := establishOfflineSession(t)
+	ctx := context.Background()
+	_, err := provider.HandleRefreshToken(ctx, clientID, secret, initialRefresh, "")
+	require.NoError(t, err)
+	_, err = provider.HandleRefreshToken(ctx, clientID, secret, initialRefresh, "")
+	require.NoError(t, err)
+
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(ctx, &collected))
+	var replays int64
+	for _, scope := range collected.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			if m.Name != "oauth2_refresh_grace_replays_total" {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			require.True(t, ok)
+			for _, point := range sum.DataPoints {
+				agentID, found := point.Attributes.Value("agent_id")
+				require.True(t, found)
+				assert.Equal(t, clientID, agentID.AsString())
+				replays += point.Value
+			}
+		}
+	}
+	assert.EqualValues(t, 1, replays)
 }

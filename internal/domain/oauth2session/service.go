@@ -70,6 +70,7 @@ type OAuth2SessionService struct {
 	jweTokenService     *domjwe.TokenService
 	cimdAssertionSigner ports.CIMDClientAssertionSigner
 	config              Config
+	metrics             *sessionMetrics
 	logger              *slog.Logger
 }
 
@@ -169,6 +170,7 @@ func NewOAuth2SessionService(
 		httpClient:      httpClient,
 		jweTokenService: jweTokenService,
 		config:          config,
+		metrics:         newSessionMetrics(),
 		logger:          logger,
 	}
 }
@@ -660,6 +662,7 @@ func (s *OAuth2SessionService) createSession(
 	}
 	if session != nil {
 		if preserved {
+			s.metrics.recordPreserved(ctx, serviceID)
 			s.logger.InfoContext(ctx, "oauth2_refresh_token_preserved",
 				"event", "session.oauth2.refresh_token_preserved",
 				"principal", principal,
@@ -844,6 +847,7 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 	for attempt := range attempts {
 		token, outcome, err := s.refreshOnce(ctx, entity, refreshToken, clientSecret)
 		if err == nil {
+			s.metrics.recordRefresh(ctx, entity.ID, nil)
 			if isCIMDClient {
 				s.auditCIMDTokenAcquisition(entity.ID, "refresh", "success")
 			}
@@ -862,6 +866,7 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= delay {
 			break
 		}
+		s.metrics.recordRetry(ctx, entity.ID)
 		s.logger.WarnContext(ctx, "token refresh failed, retrying",
 			"event", "session.oauth2.refresh_retry",
 			"service_id", entity.ID,
@@ -879,6 +884,7 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 			break
 		}
 	}
+	s.metrics.recordRefresh(ctx, entity.ID, lastErr)
 	if isCIMDClient {
 		s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 	}
@@ -1364,6 +1370,9 @@ func (s *OAuth2SessionService) GetValidAccessToken(
 		if resultErr != nil && ctx.Err() != nil {
 			resultErr = callerCanceledError(ctx, OperationSessionLookup, resultErr)
 		}
+		if resultErr != nil {
+			s.metrics.recordReauthRequired(ctx, serviceID, resultErr)
+		}
 	}()
 	if err := ctx.Err(); err != nil {
 		return nil, "", sessionOperationError(ctx, OperationSessionLookup, DetailCallerCanceled, err)
@@ -1485,6 +1494,7 @@ func (s *OAuth2SessionService) refreshExpiredSession(ctx context.Context, princi
 }
 
 func (s *OAuth2SessionService) logProactiveRefreshFallback(ctx context.Context, serviceID id.ServiceID, err error) {
+	s.metrics.recordProactiveFallback(ctx, serviceID)
 	s.logger.WarnContext(ctx, "oauth2_proactive_refresh_failed",
 		"event", "session.oauth2.proactive_refresh_failed",
 		"service_id", serviceID,

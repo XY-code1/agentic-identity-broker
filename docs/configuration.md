@@ -1460,6 +1460,17 @@ When tracing is enabled, the following operations emit child spans:
 | `jwks.fetch` | JWKS key set fetch/cache lookup | `url.full` |
 | `oauth2.token_exchange` | Upstream OAuth2 token proxy | `http.method=POST`, `http.status_code` |
 
+When metrics are enabled, third-party session and broker refresh-token health is reported with these counters. Attributes are bounded; tokens and provider text are never recorded. See the [session troubleshooting runbook](/docs/operations/session-troubleshooting) for alerting guidance.
+
+| Metric | Attributes |
+|---|---|
+| `oauth2_session_refreshes_total` | `service_id`, `outcome` |
+| `oauth2_session_refresh_retries_total` | `service_id` |
+| `oauth2_session_reauth_required_total` | `service_id`, `failure_detail` |
+| `oauth2_session_proactive_refresh_fallbacks_total` | `service_id` |
+| `oauth2_session_refresh_token_preserved_total` | `service_id` |
+| `oauth2_refresh_grace_replays_total` | `agent_id` |
+
 ### Security notes
 
 - `telemetry.exporter.insecure` defaults to `false`. TLS is required by default. The broker

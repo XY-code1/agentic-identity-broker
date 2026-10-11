@@ -160,8 +160,9 @@ export class SessionsApiService {
   async terminateSession(serviceId: string): Promise<void> {
     await apiClient.delete(`/third-party/${serviceId}/session`);
 
-    // Invalidate caches since data changed
+    // Session lists and every agent's connection status depend on this session.
     apiCache.invalidatePattern('/third-party/*');
+    apiCache.invalidatePattern('/consent/agents*');
   }
 
   /**

@@ -11,6 +11,9 @@ import (
 
 	"github.com/ory/fosite"
 	fositestorage "github.com/ory/fosite/storage"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
@@ -35,6 +38,7 @@ type FositeStorage struct {
 	credRepo           ports.ClientCredentialRepository
 	clientResolver     ports.ClientResolver
 	refreshGracePeriod time.Duration
+	graceReplays       metric.Int64Counter
 	logger             *slog.Logger
 }
 
@@ -57,6 +61,9 @@ func NewFositeStorage(
 		refreshGracePeriod: DefaultRefreshTokenGracePeriod,
 		logger:             logger,
 	}
+	storage.graceReplays, _ = otel.Meter("oauth2server").Int64Counter("oauth2_refresh_grace_replays_total",
+		metric.WithDescription("Rotated refresh tokens redeemed again within the rotation grace period"),
+		metric.WithUnit("{replay}"))
 	if len(transactions) > 0 {
 		storage.transactions = transactions[0]
 	}
@@ -286,6 +293,9 @@ func (s *FositeStorage) GetRefreshTokenSession(ctx context.Context, signature st
 		return req, fosite.ErrInactiveToken
 	}
 	if refreshSession.UsedAt != nil {
+		if s.graceReplays != nil {
+			s.graceReplays.Add(ctx, 1, metric.WithAttributes(attribute.String("agent_id", refreshSession.AgentID.String())))
+		}
 		s.logger.InfoContext(ctx, "refresh token replayed within rotation grace period",
 			"event", "oauth2server.refresh.grace_replay",
 			"agent_id", refreshSession.AgentID,

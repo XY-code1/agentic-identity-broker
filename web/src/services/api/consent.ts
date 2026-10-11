@@ -207,6 +207,8 @@ export class ConsentApiService {
     // Invalidate caches for this agent since data changed
     apiCache.invalidatePattern(`/consent/agents/${agentId}*`);
     apiCache.invalidate('/consent/agents');
+    // Session cards show how many agents depend on each session.
+    apiCache.invalidatePattern('/third-party/*');
 
     // Handle 204 No Content response (grant revoked with empty tokens)
     if (response.status === 204) {
@@ -253,6 +255,8 @@ export class ConsentApiService {
     // Invalidate caches on success
     apiCache.invalidatePattern(`/consent/agents/${agentId}*`);
     apiCache.invalidate('/consent/agents');
+    // Session cards show how many agents depend on each session.
+    apiCache.invalidatePattern('/third-party/*');
   }
 }
 
