@@ -244,6 +244,7 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv("oauth2_authorization_server.proxy.upstream_timeout", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_PROXY_UPSTREAM_TIMEOUT")
 	_ = l.v.BindEnv("oauth2_authorization_server.supported_scopes", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_SUPPORTED_SCOPES")
 	_ = l.v.BindEnv("oauth2_authorization_server.local.refresh_token_ttl", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_REFRESH_TOKEN_TTL")
+	_ = l.v.BindEnv("oauth2_authorization_server.local.refresh_token_grace_period", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_REFRESH_TOKEN_GRACE_PERIOD")
 	_ = l.v.BindEnv("oauth2_authorization_server.local.token_ttl", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_TTL")
 	_ = l.v.BindEnv("oauth2_authorization_server.local.token_claims_expression", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_CLAIMS_EXPRESSION")
 	_ = l.v.BindEnv("oauth2_authorization_server.local.signing_keys.bootstrap_timeout", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_SIGNING_KEYS_BOOTSTRAP_TIMEOUT")

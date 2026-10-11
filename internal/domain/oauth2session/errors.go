@@ -67,6 +67,9 @@ type RefreshRejectedError struct {
 	StatusCode int
 	// OAuthError is the RFC 6749 §5.2 "error" code from a JSON error body; empty otherwise.
 	OAuthError string
+	// TokenRejected reports that a 4xx answer said the refresh token itself is no longer valid,
+	// either with invalid_grant or a provider-specific code such as invalid_token.
+	TokenRejected bool
 }
 
 func (e *RefreshRejectedError) Error() string {
@@ -75,7 +78,7 @@ func (e *RefreshRejectedError) Error() string {
 
 // Unwrap distinguishes provider rejection from a locally recorded token expiry.
 func (e *RefreshRejectedError) Unwrap() error {
-	if e.OAuthError == "invalid_grant" && e.StatusCode >= 400 && e.StatusCode <= 499 && e.StatusCode != http.StatusTooManyRequests {
+	if e.TokenRejected || e.OAuthError == "invalid_grant" && e.StatusCode >= 400 && e.StatusCode <= 499 && e.StatusCode != http.StatusTooManyRequests {
 		return ErrRefreshRejected
 	}
 	return nil

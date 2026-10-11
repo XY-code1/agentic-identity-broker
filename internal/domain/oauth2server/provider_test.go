@@ -410,13 +410,20 @@ func TestProvider_RefreshTokens(t *testing.T) {
 		require.NoError(t, err)
 		require.NotEmpty(t, resp.RefreshToken)
 
+		provider.fositeStorage.SetRefreshTokenGracePeriod(time.Millisecond)
 		refreshed, err := provider.HandleRefreshToken(context.Background(), agent.ID.String(), plaintext, resp.RefreshToken, "")
 		require.NoError(t, err)
 		require.NotEmpty(t, refreshed.AccessToken)
 		require.NotEmpty(t, refreshed.RefreshToken)
 		assert.NotEqual(t, resp.RefreshToken, refreshed.RefreshToken)
 
+		// Reuse after the rotation grace period is rejected (specs/033 US1-S3).
+		time.Sleep(5 * time.Millisecond)
 		_, err = provider.HandleRefreshToken(context.Background(), agent.ID.String(), plaintext, resp.RefreshToken, "")
+		assert.ErrorIs(t, err, ErrInvalidGrant)
+
+		// Reuse detection revokes the chain, including the token issued by the rotation.
+		_, err = provider.HandleRefreshToken(context.Background(), agent.ID.String(), plaintext, refreshed.RefreshToken, "")
 		assert.ErrorIs(t, err, ErrInvalidGrant)
 	})
 

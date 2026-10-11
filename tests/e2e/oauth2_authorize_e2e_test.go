@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -19,6 +20,9 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 )
+
+// refreshGracePeriod is the broker refresh-token rotation grace period used by this suite.
+const refreshGracePeriod = 2 * time.Second
 
 var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 	var (
@@ -34,6 +38,8 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 	BeforeEach(func() {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 		config := fixtures.LocalConfig()
+		// A short rotation grace period lets the reuse scenario observe its end without long waits.
+		config.OAuth2AuthServer.Local.RefreshTokenGracePeriod = refreshGracePeriod
 		storageFactory = bootstrap.NewStorageFactory(logger)
 		var err error
 		testStorage, err = storageFactory.NewTestStorage()
@@ -262,20 +268,91 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 				Expect(secondResp.StatusCode).To(Equal(http.StatusOK))
 			})
 
-			It("rejects reuse of a rotated refresh token", func() {
+			// US1-S3 from specs/033-offline-access-refresh/spec.md
+			It("rejects reuse of a rotated refresh token after the grace period and revokes the chain", func() {
+				refreshToken := tokenBody["refresh_token"].(string)
+
+				firstResp := exchangeRefreshToken(refreshToken)
+				Expect(firstResp.StatusCode).To(Equal(http.StatusOK))
+				var firstBody map[string]interface{}
+				Expect(json.NewDecoder(firstResp.Body).Decode(&firstBody)).ToNot(HaveOccurred())
+				_ = firstResp.Body.Close()
+				rotated := firstBody["refresh_token"].(string)
+
+				// Replays inside the grace period succeed; once it has passed, reuse is rejected.
+				var reuseBody map[string]interface{}
+				Eventually(func() int {
+					reuseResp := exchangeRefreshToken(refreshToken)
+					defer func() { _ = reuseResp.Body.Close() }()
+					reuseBody = nil
+					_ = json.NewDecoder(reuseResp.Body).Decode(&reuseBody)
+					return reuseResp.StatusCode
+				}).WithTimeout(refreshGracePeriod + 3*time.Second).WithPolling(500 * time.Millisecond).Should(Equal(http.StatusBadRequest))
+				Expect(reuseBody["error"]).To(Equal("invalid_grant"))
+
+				revokedResp := exchangeRefreshToken(rotated)
+				defer func() { _ = revokedResp.Body.Close() }()
+				Expect(revokedResp.StatusCode).To(Equal(http.StatusBadRequest), "reuse detection revokes the rotated token too")
+			})
+
+			// US1-S4 from specs/033-offline-access-refresh/spec.md
+			It("answers a lost-response retry within the grace period and keeps the newest token valid", func() {
 				refreshToken := tokenBody["refresh_token"].(string)
 
 				firstResp := exchangeRefreshToken(refreshToken)
 				Expect(firstResp.StatusCode).To(Equal(http.StatusOK))
 				_ = firstResp.Body.Close()
 
-				reuseResp := exchangeRefreshToken(refreshToken)
-				defer func() { _ = reuseResp.Body.Close() }()
-				Expect(reuseResp.StatusCode).To(Equal(http.StatusBadRequest))
+				retryResp := exchangeRefreshToken(refreshToken)
+				defer func() { _ = retryResp.Body.Close() }()
+				Expect(retryResp.StatusCode).To(Equal(http.StatusOK))
+				var retryBody map[string]interface{}
+				Expect(json.NewDecoder(retryResp.Body).Decode(&retryBody)).ToNot(HaveOccurred())
+				newest, ok := retryBody["refresh_token"].(string)
+				Expect(ok).To(BeTrue())
 
-				var reuseBody map[string]interface{}
-				Expect(json.NewDecoder(reuseResp.Body).Decode(&reuseBody)).ToNot(HaveOccurred())
-				Expect(reuseBody["error"]).To(Equal("invalid_grant"))
+				nextResp := exchangeRefreshToken(newest)
+				defer func() { _ = nextResp.Body.Close() }()
+				Expect(nextResp.StatusCode).To(Equal(http.StatusOK))
+			})
+
+			// US1-S5 from specs/033-offline-access-refresh/spec.md
+			It("does not revoke the winner when two processes refresh concurrently", func() {
+				refreshToken := tokenBody["refresh_token"].(string)
+
+				type result struct {
+					status       int
+					refreshToken string
+				}
+				results := make(chan result, 2)
+				for range 2 {
+					go func() {
+						defer GinkgoRecover()
+						resp := exchangeRefreshToken(refreshToken)
+						defer func() { _ = resp.Body.Close() }()
+						var body map[string]interface{}
+						_ = json.NewDecoder(resp.Body).Decode(&body)
+						token, _ := body["refresh_token"].(string)
+						results <- result{status: resp.StatusCode, refreshToken: token}
+					}()
+				}
+				var winner string
+				for range 2 {
+					r := <-results
+					if r.status == http.StatusOK && r.refreshToken != "" {
+						winner = r.refreshToken
+					}
+				}
+				Expect(winner).ToNot(BeEmpty())
+
+				// The loser retries with the token it still holds.
+				loserRetry := exchangeRefreshToken(refreshToken)
+				Expect(loserRetry.StatusCode).To(Equal(http.StatusOK))
+				_ = loserRetry.Body.Close()
+
+				winnerResp := exchangeRefreshToken(winner)
+				defer func() { _ = winnerResp.Body.Close() }()
+				Expect(winnerResp.StatusCode).To(Equal(http.StatusOK))
 			})
 		})
 

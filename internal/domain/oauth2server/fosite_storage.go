@@ -21,15 +21,21 @@ import (
 
 var _ fositestorage.Transactional = (*FositeStorage)(nil)
 
+// DefaultRefreshTokenGracePeriod is how long a rotated refresh token may be presented again.
+// It covers a client retrying after a lost token response and two processes racing with one
+// refresh token, without leaving a usable window for a replayed stolen token.
+const DefaultRefreshTokenGracePeriod = 60 * time.Second
+
 // FositeStorage wraps project repositories to implement fosite storage interfaces.
 type FositeStorage struct {
-	codeRepo       ports.AuthorizationCodeRepository
-	refreshRepo    ports.RefreshTokenSessionRepository
-	transactions   ports.StorageTransactionManager
-	pkceRepo       ports.PKCESessionRepository
-	credRepo       ports.ClientCredentialRepository
-	clientResolver ports.ClientResolver
-	logger         *slog.Logger
+	codeRepo           ports.AuthorizationCodeRepository
+	refreshRepo        ports.RefreshTokenSessionRepository
+	transactions       ports.StorageTransactionManager
+	pkceRepo           ports.PKCESessionRepository
+	credRepo           ports.ClientCredentialRepository
+	clientResolver     ports.ClientResolver
+	refreshGracePeriod time.Duration
+	logger             *slog.Logger
 }
 
 // NewFositeStorage creates a new FositeStorage wrapping our repositories.
@@ -43,12 +49,13 @@ func NewFositeStorage(
 	transactions ...ports.StorageTransactionManager,
 ) *FositeStorage {
 	storage := &FositeStorage{
-		codeRepo:       codeRepo,
-		refreshRepo:    refreshRepo,
-		pkceRepo:       pkceRepo,
-		credRepo:       credRepo,
-		clientResolver: clientResolver,
-		logger:         logger,
+		codeRepo:           codeRepo,
+		refreshRepo:        refreshRepo,
+		pkceRepo:           pkceRepo,
+		credRepo:           credRepo,
+		clientResolver:     clientResolver,
+		refreshGracePeriod: DefaultRefreshTokenGracePeriod,
+		logger:             logger,
 	}
 	if len(transactions) > 0 {
 		storage.transactions = transactions[0]
@@ -275,18 +282,38 @@ func (s *FositeStorage) GetRefreshTokenSession(ctx context.Context, signature st
 		RequestedAt:    refreshSession.CreatedAt,
 	}
 
-	if refreshSession.UsedAt != nil {
+	if !s.refreshTokenActive(refreshSession) {
 		return req, fosite.ErrInactiveToken
+	}
+	if refreshSession.UsedAt != nil {
+		s.logger.InfoContext(ctx, "refresh token replayed within rotation grace period",
+			"event", "oauth2server.refresh.grace_replay",
+			"agent_id", refreshSession.AgentID,
+			"client_id", refreshSession.ClientID,
+			"rotated_seconds_ago", int(time.Since(*refreshSession.UsedAt).Seconds()))
 	}
 
 	return req, nil
 }
 
-// DeleteRefreshTokenSession marks a refresh token inactive. It is idempotent: a token that is
-// already used (or absent) is treated as successfully deleted, which fosite relies on during
+// refreshTokenActive reports whether a refresh token may be redeemed: it is unused, or it was
+// rotated (not revoked) within the grace period. Outside that window a used token triggers
+// fosite's reuse detection, which revokes the whole token chain.
+func (s *FositeStorage) refreshTokenActive(session *storage.RefreshTokenSession) bool {
+	if session.RevokedAt != nil {
+		return false
+	}
+	if session.UsedAt == nil {
+		return true
+	}
+	return s.refreshGracePeriod > 0 && time.Since(*session.UsedAt) <= s.refreshGracePeriod
+}
+
+// DeleteRefreshTokenSession revokes a refresh token. It is idempotent: a token that is already
+// revoked (or absent) is treated as successfully deleted, which fosite relies on during
 // refresh-token reuse detection.
 func (s *FositeStorage) DeleteRefreshTokenSession(ctx context.Context, signature string) error {
-	if err := s.refreshRepo.MarkUsed(ctx, signature); err != nil {
+	if err := s.refreshRepo.MarkRevoked(ctx, signature); err != nil {
 		var se *storage.StorageError
 		if errors.As(err, &se) && se.Kind == storage.ErrorKindNotFound {
 			return nil
@@ -297,11 +324,26 @@ func (s *FositeStorage) DeleteRefreshTokenSession(ctx context.Context, signature
 }
 
 // RotateRefreshToken marks the presented refresh token inactive before minting a new one.
+// A token already rotated within the grace period may rotate again, which lets a lost-response
+// retry and the loser of a concurrent refresh obtain a fresh pair instead of revoking the chain.
 func (s *FositeStorage) RotateRefreshToken(ctx context.Context, _ string, signature string) error {
-	if err := s.refreshRepo.MarkUsed(ctx, signature); err != nil {
-		return s.mapStorageError(ctx, err)
+	err := s.refreshRepo.MarkUsed(ctx, signature)
+	if err == nil {
+		return nil
 	}
-	return nil
+	var se *storage.StorageError
+	if errors.As(err, &se) && se.Kind == storage.ErrorKindNotFound {
+		session, findErr := s.refreshRepo.FindBySignature(ctx, signature)
+		if findErr == nil && s.refreshTokenActive(session) {
+			return nil
+		}
+	}
+	return s.mapStorageError(ctx, err)
+}
+
+// SetRefreshTokenGracePeriod sets how long a rotated refresh token may be presented again.
+func (s *FositeStorage) SetRefreshTokenGracePeriod(d time.Duration) {
+	s.refreshGracePeriod = d
 }
 
 // RevokeAccessToken is a no-op for stateless JWT tokens.

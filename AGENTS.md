@@ -146,6 +146,7 @@ Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. 
 | 035 | `adrs/035-root-mounted-spa.md` | Root-mounted SPA (first-class routes; /consent unmounted) |
 | 032 | `adrs/032-impersonation-requires-user-delegation.md` | User delegation required for OAuth2 impersonation |
 | 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
+| 038 | `adrs/038-refresh-token-rotation-grace-period.md` | Rotated broker refresh tokens redeemable within a short grace period (proposed) |
 
 ## Domain Glossary
 

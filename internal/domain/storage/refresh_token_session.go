@@ -8,6 +8,8 @@ import (
 
 // RefreshTokenSession stores an issued refresh token by signature for single-use rotation.
 // The signature is the SHA-256 hash of the opaque refresh token value.
+// UsedAt records rotation or revocation; RevokedAt is set only by revocation, so a rotated
+// token can be told apart from one whose chain was revoked after reuse detection.
 type RefreshTokenSession struct {
 	Signature   string       `db:"signature"`
 	RequestID   string       `db:"request_id"`
@@ -19,6 +21,7 @@ type RefreshTokenSession struct {
 	Scope       string       `db:"scope"`
 	ExpiresAt   time.Time    `db:"expires_at"`
 	UsedAt      *time.Time   `db:"used_at"`
+	RevokedAt   *time.Time   `db:"revoked_at"`
 	CreatedAt   time.Time    `db:"created_at"`
 }
 

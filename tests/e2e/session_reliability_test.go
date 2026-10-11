@@ -244,4 +244,22 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(session.Scope).To(Equal([]string{"repo"}))
 	})
+
+	// US5-S7 from specs/013-token-exchange/spec.md
+	It("[013 US5-S7] treats a provider-specific dead refresh token code like invalid_grant", func() {
+		ctx := context.Background()
+		Expect(testStorage.UserSessions().Create(ctx, fixtures.ExpiredGitHubSessionForPrincipal(principal))).To(Succeed())
+		before, err := testStorage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), githubID)
+		Expect(err).NotTo(HaveOccurred())
+		mockUpstream.WithErrorResponse("invalid_token")
+
+		resp, body := exchange()
+		Expect(resp).To(matchers.HaveStatusCode(http.StatusBadRequest))
+		Expect(body["error"]).To(Equal("invalid_grant"))
+		Expect(body["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/sessions"))
+
+		after, err := testStorage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), githubID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after.EncryptedRefreshToken).To(Equal(before.EncryptedRefreshToken))
+	})
 })

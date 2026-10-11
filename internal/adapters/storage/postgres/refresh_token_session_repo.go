@@ -34,10 +34,10 @@ func (r *RefreshTokenSessionRepo) Create(ctx context.Context, session *storage.R
 	defer cancel()
 
 	_, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
-		`INSERT INTO refresh_token_sessions (signature, request_id, agent_id, client_id, principal, scope, expires_at, used_at, created_at, email, display_name)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		`INSERT INTO refresh_token_sessions (signature, request_id, agent_id, client_id, principal, scope, expires_at, used_at, revoked_at, created_at, email, display_name)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		session.Signature, session.RequestID, session.AgentID, session.ClientID, session.Principal,
-		session.Scope, session.ExpiresAt, session.UsedAt, session.CreatedAt, session.Email, session.DisplayName,
+		session.Scope, session.ExpiresAt, session.UsedAt, session.RevokedAt, session.CreatedAt, session.Email, session.DisplayName,
 	)
 	if err != nil {
 		return storage.NewStorageError("RefreshTokenSessionRepo.Create", storage.ErrorKindUnknown, err, "failed to create refresh token session")
@@ -55,7 +55,7 @@ func (r *RefreshTokenSessionRepo) FindBySignature(ctx context.Context, signature
 
 	var session storage.RefreshTokenSession
 	err := r.adapter.db.GetContext(queryCtx, &session,
-		`SELECT signature, request_id, agent_id, client_id, principal, scope, expires_at, used_at, created_at, email, display_name
+		`SELECT signature, request_id, agent_id, client_id, principal, scope, expires_at, used_at, revoked_at, created_at, email, display_name
 		 FROM refresh_token_sessions WHERE signature = $1`, signature)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
@@ -86,6 +86,23 @@ func (r *RefreshTokenSessionRepo) MarkUsed(ctx context.Context, signature string
 	return checkRowsAffected("RefreshTokenSessionRepo.MarkUsed", result, "refresh token session not found or already used")
 }
 
+func (r *RefreshTokenSessionRepo) MarkRevoked(ctx context.Context, signature string) error {
+	if r.adapter.db == nil {
+		return storage.NewStorageError("RefreshTokenSessionRepo.MarkRevoked", storage.ErrorKindConnection, nil, "database not initialized")
+	}
+
+	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
+	defer cancel()
+
+	now := time.Now()
+	result, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
+		`UPDATE refresh_token_sessions SET used_at = COALESCE(used_at, $1), revoked_at = COALESCE(revoked_at, $1) WHERE signature = $2`, now, signature)
+	if err != nil {
+		return storage.NewStorageError("RefreshTokenSessionRepo.MarkRevoked", storage.ErrorKindUnknown, err, "failed to revoke refresh token session")
+	}
+	return checkRowsAffected("RefreshTokenSessionRepo.MarkRevoked", result, "refresh token session not found")
+}
+
 func (r *RefreshTokenSessionRepo) RevokeByRequestID(ctx context.Context, requestID string) error {
 	if r.adapter.db == nil {
 		return storage.NewStorageError("RefreshTokenSessionRepo.RevokeByRequestID", storage.ErrorKindConnection, nil, "database not initialized")
@@ -96,7 +113,7 @@ func (r *RefreshTokenSessionRepo) RevokeByRequestID(ctx context.Context, request
 
 	now := time.Now()
 	_, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
-		`UPDATE refresh_token_sessions SET used_at = $1 WHERE request_id = $2 AND used_at IS NULL`, now, requestID)
+		`UPDATE refresh_token_sessions SET used_at = COALESCE(used_at, $1), revoked_at = $1 WHERE request_id = $2 AND revoked_at IS NULL`, now, requestID)
 	if err != nil {
 		return storage.NewStorageError("RefreshTokenSessionRepo.RevokeByRequestID", storage.ErrorKindUnknown, err, "failed to revoke refresh token sessions")
 	}

@@ -66,6 +66,7 @@ type LocalOAuth2Config struct {
 	IssuerURI              string
 	TokenTTL               time.Duration
 	RefreshTokenTTL        time.Duration
+	RefreshGracePeriod     time.Duration
 	TokenClaimsExpression  string
 	SigningKeys            LocalSigningKeysConfig
 	SupportedResponseTypes []string

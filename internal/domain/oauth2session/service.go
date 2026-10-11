@@ -1015,19 +1015,36 @@ func thirdpartyRefreshError(resp *http.Response) error {
 			}
 		}
 	}
+	tokenRejected := resp.StatusCode >= 400 && resp.StatusCode <= 499 && resp.StatusCode != http.StatusTooManyRequests &&
+		(retrieveErr.ErrorCode == "invalid_grant" || isDeadRefreshTokenCode(oauthCode))
 	detail := DetailProviderRejected
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 && resp.StatusCode <= 599:
 		detail = DetailProviderUnavailable
 	case err != nil:
 		detail = DetailProviderUnavailable
-	case resp.StatusCode >= 400 && resp.StatusCode <= 499 && retrieveErr.ErrorCode == "invalid_grant":
+	case tokenRejected:
 		detail = DetailRefreshRejected
 	case resp.StatusCode >= 400 && resp.StatusCode <= 499 && (retrieveErr.ErrorCode == "invalid_client" || retrieveErr.ErrorCode == "unauthorized_client"):
 		detail = DetailProviderClientRejected
 	}
 	metadata := NewErrorMetadata(OperationRefresh, detail).WithProviderResponse(resp.StatusCode, oauthCode)
-	return NewOperationError(metadata, errors.Join(&RefreshRejectedError{StatusCode: resp.StatusCode, OAuthError: retrieveErr.ErrorCode}, retrieveErr, err))
+	return NewOperationError(metadata, errors.Join(&RefreshRejectedError{StatusCode: resp.StatusCode, OAuthError: retrieveErr.ErrorCode, TokenRejected: tokenRejected}, retrieveErr, err))
+}
+
+// deadRefreshTokenCodes are non-standard error codes some providers return instead of
+// invalid_grant when the refresh token itself is expired or revoked.
+var deadRefreshTokenCodes = map[string]struct{}{
+	"invalid_token":         {},
+	"expired_token":         {},
+	"token_expired":         {},
+	"invalid_refresh_token": {},
+	"refresh_token_expired": {},
+}
+
+func isDeadRefreshTokenCode(code string) bool {
+	_, ok := deadRefreshTokenCodes[code]
+	return ok
 }
 
 func (s *OAuth2SessionService) setSessionTokens(ctx context.Context, session *storage.UserSession, newToken *oauth2.Token) error {

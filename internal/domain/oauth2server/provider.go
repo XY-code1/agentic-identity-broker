@@ -125,6 +125,12 @@ func NewProvider(
 	}, nil
 }
 
+// SetRefreshTokenGracePeriod sets how long a rotated refresh token may be presented again
+// before reuse detection revokes its chain.
+func (p *Provider) SetRefreshTokenGracePeriod(d time.Duration) {
+	p.fositeStorage.SetRefreshTokenGracePeriod(d)
+}
+
 // ClientAuth returns the client authentication service.
 func (p *Provider) ClientAuth() *ClientAuthService {
 	return p.clientAuth

@@ -19,7 +19,9 @@ As an OAuth2 client using broker-issued tokens, I want to request offline access
 
 1. **Given** the broker is operating in a mode that issues its own tokens, **and** a client is allowed to use refresh tokens, **when** the client requests `offline_access` during authorization and successfully exchanges the authorization code, **then** the token response includes both an access token and a refresh token.
 2. **Given** a client has received a valid refresh token, **when** the client redeems it before it expires, **then** the broker issues a replacement access token and a replacement refresh token without requiring user interaction.
-3. **Given** a client has already used a refresh token successfully, **when** it attempts to reuse that same refresh token, **then** the broker rejects the request as an invalid grant.
+3. **Given** a client has already used a refresh token successfully, **when** it attempts to reuse that same refresh token after the rotation grace period (`oauth2_authorization_server.local.refresh_token_grace_period`, default 60 seconds) has elapsed, **then** the broker rejects the request as an invalid grant and revokes the token chain.
+4. **Given** a client has just rotated a refresh token, **when** it presents the previous refresh token again within the rotation grace period (lost-response retry), **then** the broker answers with a usable token pair and the newest refresh token in the chain remains valid.
+5. **Given** two processes present the same refresh token concurrently, **when** one of them wins the rotation, **then** the loser's retry within the grace period does not revoke the winner's refresh token.
 
 ---
 
@@ -69,7 +71,8 @@ As an integrator or operator, I want the broker’s metadata to accurately descr
 - **FR-001**: The broker MUST issue a refresh token for a successful authorization-code exchange only when the granted scopes include `offline_access` or `offline` and the client declares support for the refresh-token grant.
 - **FR-002**: The broker MUST allow eligible clients to redeem a valid refresh token for a replacement access token without requiring the user to repeat the authorization flow.
 - **FR-003**: The broker MUST rotate refresh tokens on successful use so that the previously used refresh token becomes invalid.
-- **FR-004**: The broker MUST reject reuse of a rotated or revoked refresh token as an invalid grant.
+- **FR-004**: The broker MUST reject reuse of a revoked refresh token, and of a rotated refresh token after the rotation grace period, as an invalid grant and revoke its request chain. Within the grace period a rotated, unrevoked refresh token MAY be redeemed again by the same client (ADR 038).
+- **FR-018**: The broker MUST let operators configure the rotation grace period between 1 second and 5 minutes, defaulting to 60 seconds, and MUST record every grace-period redemption as an audit event.
 - **FR-005**: The broker MUST NOT issue a refresh token when `offline_access` is not requested, even if the rest of the authorization flow succeeds.
 - **FR-006**: The broker MUST NOT issue a refresh token to a client that does not declare support for the refresh-token grant.
 - **FR-007**: The broker MUST treat `offline_access` and `offline` as broker-reserved authorization scopes that are permitted during authorization even when they are absent from a client’s normal allowlisted scopes.

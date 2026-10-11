@@ -384,15 +384,21 @@ type ProxyModeConfig struct {
 
 const DefaultSigningKeyBootstrapTimeout = 90 * time.Second
 
+// DefaultRefreshTokenGracePeriod is the default reuse window for a rotated broker refresh token.
+const DefaultRefreshTokenGracePeriod = 60 * time.Second
+
 // LocalModeConfig holds local token issuance configuration for local/hybrid mode.
 type LocalModeConfig struct {
 	// IssuerURI is the JWT iss claim for locally-minted tokens. Optional — defaults to
 	// server.enduser.public_url when empty, allowing independent control behind CDNs or proxies.
-	IssuerURI             string                 `mapstructure:"issuer_uri"`
-	TokenTTL              time.Duration          `mapstructure:"token_ttl"`
-	RefreshTokenTTL       time.Duration          `mapstructure:"refresh_token_ttl"`
-	TokenClaimsExpression string                 `mapstructure:"token_claims_expression"`
-	SigningKeys           LocalSigningKeysConfig `mapstructure:"signing_keys"`
+	IssuerURI       string        `mapstructure:"issuer_uri"`
+	TokenTTL        time.Duration `mapstructure:"token_ttl"`
+	RefreshTokenTTL time.Duration `mapstructure:"refresh_token_ttl"`
+	// RefreshTokenGracePeriod is how long a rotated refresh token may be presented again before
+	// reuse detection revokes its chain. Range: 1s to 5m. Default: 60s.
+	RefreshTokenGracePeriod time.Duration          `mapstructure:"refresh_token_grace_period"`
+	TokenClaimsExpression   string                 `mapstructure:"token_claims_expression"`
+	SigningKeys             LocalSigningKeysConfig `mapstructure:"signing_keys"`
 }
 
 // LocalSigningKeysConfig holds local signing-key startup settings.
@@ -452,7 +458,7 @@ func (c *OAuth2AuthServerConfig) validateProxyMode() error {
 		return c.newValidationError("oauth2_authorization_server.cimd.enabled requires mode 'local' or 'hybrid'; CIMD is incompatible with proxy mode")
 	}
 
-	if c.Local.TokenTTL != 0 || c.Local.RefreshTokenTTL != 0 || c.Local.TokenClaimsExpression != "" || c.Local.IssuerURI != "" || c.Local.SigningKeys.BootstrapTimeout != 0 {
+	if c.Local.TokenTTL != 0 || c.Local.RefreshTokenTTL != 0 || c.Local.RefreshTokenGracePeriod != 0 || c.Local.TokenClaimsExpression != "" || c.Local.IssuerURI != "" || c.Local.SigningKeys.BootstrapTimeout != 0 {
 		return c.newValidationError("oauth2_authorization_server.local must be empty in proxy mode")
 	}
 
@@ -558,6 +564,9 @@ func (c *OAuth2AuthServerConfig) applyLocalDefaults() {
 	if c.Local.RefreshTokenTTL == 0 {
 		c.Local.RefreshTokenTTL = 30 * 24 * time.Hour
 	}
+	if c.Local.RefreshTokenGracePeriod == 0 {
+		c.Local.RefreshTokenGracePeriod = DefaultRefreshTokenGracePeriod
+	}
 	if c.Local.SigningKeys.BootstrapTimeout == 0 {
 		c.Local.SigningKeys.BootstrapTimeout = DefaultSigningKeyBootstrapTimeout
 	}
@@ -566,6 +575,9 @@ func (c *OAuth2AuthServerConfig) applyLocalDefaults() {
 func (c *OAuth2AuthServerConfig) validateRefreshTokenTTL() error {
 	if c.Local.RefreshTokenTTL < 0 {
 		return c.newValidationError("oauth2_authorization_server.local.refresh_token_ttl must be a positive duration")
+	}
+	if grace := c.Local.RefreshTokenGracePeriod; grace < 0 || grace > 0 && (grace < time.Second || grace > 5*time.Minute) {
+		return c.newValidationError("oauth2_authorization_server.local.refresh_token_grace_period must be between 1s and 5m")
 	}
 	return nil
 }
@@ -622,6 +634,7 @@ func (c *OAuth2AuthServerConfig) Resolve() (OAuth2ModeConfig, error) {
 			IssuerURI:              c.Local.IssuerURI,
 			TokenTTL:               c.Local.TokenTTL,
 			RefreshTokenTTL:        c.Local.RefreshTokenTTL,
+			RefreshGracePeriod:     c.Local.RefreshTokenGracePeriod,
 			TokenClaimsExpression:  c.Local.TokenClaimsExpression,
 			SigningKeys:            c.Local.SigningKeys,
 			SupportedResponseTypes: c.SupportedResponseTypes,
@@ -647,6 +660,7 @@ func (c *OAuth2AuthServerConfig) Resolve() (OAuth2ModeConfig, error) {
 				IssuerURI:              c.Local.IssuerURI,
 				TokenTTL:               c.Local.TokenTTL,
 				RefreshTokenTTL:        c.Local.RefreshTokenTTL,
+				RefreshGracePeriod:     c.Local.RefreshTokenGracePeriod,
 				TokenClaimsExpression:  c.Local.TokenClaimsExpression,
 				SigningKeys:            c.Local.SigningKeys,
 				SupportedResponseTypes: c.SupportedResponseTypes,

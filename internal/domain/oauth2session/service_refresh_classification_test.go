@@ -37,6 +37,11 @@ func TestGetValidAccessToken_ClassifiesUnusableSessions(t *testing.T) {
 		{name: "service answers 500 with invalid_grant", status: 500, contentType: "application/json", body: `{"error":"invalid_grant"}`, hasRefresh: true, oauthError: "invalid_grant", detail: oauth2session.DetailProviderUnavailable},
 		{name: "service answers 503 with invalid_client", status: 503, contentType: "application/json", body: `{"error":"invalid_client"}`, hasRefresh: true, oauthError: "invalid_client", detail: oauth2session.DetailProviderUnavailable},
 		{name: "service answers 429 with invalid_grant", status: 429, contentType: "application/json", body: `{"error":"invalid_grant"}`, hasRefresh: true, oauthError: "invalid_grant", detail: oauth2session.DetailProviderUnavailable},
+		{name: "service answers non-standard invalid_token", status: 401, contentType: "application/json", body: `{"error":"invalid_token"}`, hasRefresh: true, oauthError: "unknown", detail: oauth2session.DetailRefreshRejected},
+		{name: "service answers non-standard expired_token", status: 400, contentType: "application/json", body: `{"error":"expired_token"}`, hasRefresh: true, oauthError: "unknown", detail: oauth2session.DetailRefreshRejected},
+		{name: "service answers 400 temporarily_unavailable", status: 400, contentType: "application/json", body: `{"error":"temporarily_unavailable"}`, hasRefresh: true, oauthError: "unknown", detail: oauth2session.DetailProviderRejected},
+		{name: "service answers non-JSON 400", status: 400, contentType: "text/html", body: "<html>bad request</html>", hasRefresh: true, detail: oauth2session.DetailProviderRejected},
+		{name: "service answers 503 with invalid_token", status: 503, contentType: "application/json", body: `{"error":"invalid_token"}`, hasRefresh: true, oauthError: "unknown", detail: oauth2session.DetailProviderUnavailable},
 		{name: "stored refresh token expired", hasRefresh: true, storedExpired: true, refreshExpired: true, detail: oauth2session.DetailRefreshTokenExpired},
 		{name: "no refresh token stored", detail: oauth2session.DetailAccessTokenExpired},
 	} {
@@ -98,7 +103,12 @@ func TestGetValidAccessToken_ClassifiesUnusableSessions(t *testing.T) {
 				var rejected *oauth2session.RefreshRejectedError
 				if assert.ErrorAs(t, err, &rejected) {
 					assert.Equal(t, tc.status, rejected.StatusCode)
-					assert.Equal(t, tc.oauthError, rejected.OAuthError)
+					wantRejectedCode := tc.oauthError
+					if wantRejectedCode == "unknown" {
+						// Only RFC 6749 codes are kept on the error; others are reported as unknown.
+						wantRejectedCode = ""
+					}
+					assert.Equal(t, wantRejectedCode, rejected.OAuthError)
 				}
 			} else {
 				assert.ErrorIs(t, err, oauth2session.ErrSessionExpired)

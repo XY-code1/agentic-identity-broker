@@ -829,3 +829,18 @@ func TestMigration036UserGrantsTimestampTZ(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "true", strings.TrimSpace(restored))
 }
+
+func TestMigration037RefreshTokenRevokedAt(t *testing.T) {
+	f := NewMigrationTestFramework(t)
+	defer f.Cleanup(t)
+
+	require.NoError(t, f.Up(t, 37))
+	exists, err := f.ColumnExists(t, "refresh_token_sessions", "revoked_at")
+	require.NoError(t, err)
+	assert.True(t, exists, "migration 037 must add refresh_token_sessions.revoked_at")
+
+	require.NoError(t, f.Down(t, 36))
+	exists, err = f.ColumnExists(t, "refresh_token_sessions", "revoked_at")
+	require.NoError(t, err)
+	assert.False(t, exists, "migration 037 down must drop revoked_at")
+}

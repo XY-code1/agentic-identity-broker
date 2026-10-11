@@ -368,17 +368,45 @@ func TestFositeStorage_RefreshTokenSessions(t *testing.T) {
 		assert.Equal(t, req.GetClient().GetID(), got.GetClient().GetID())
 	})
 
-	t.Run("rotated refresh token becomes inactive", func(t *testing.T) {
+	t.Run("rotated refresh token becomes inactive after the grace period", func(t *testing.T) {
 		store, _, agentRepo, credRepo := newTestFositeStorage()
+		store.SetRefreshTokenGracePeriod(time.Millisecond)
 		req := setupRequest(t, store, agentRepo, credRepo, "req-2", []string{"offline_access"})
 
 		require.NoError(t, store.CreateRefreshTokenSession(context.Background(), "sig-2", "access-2", req))
 		require.NoError(t, store.RotateRefreshToken(context.Background(), "req-2", "sig-2"))
+		time.Sleep(5 * time.Millisecond)
 
 		got, err := store.GetRefreshTokenSession(context.Background(), "sig-2", nil)
 		require.ErrorIs(t, err, fosite.ErrInactiveToken)
 		require.NotNil(t, got)
 		assert.Equal(t, "req-2", got.GetID())
+	})
+
+	t.Run("rotated refresh token stays redeemable within the grace period", func(t *testing.T) {
+		store, _, agentRepo, credRepo := newTestFositeStorage()
+		req := setupRequest(t, store, agentRepo, credRepo, "req-grace", []string{"offline_access"})
+
+		require.NoError(t, store.CreateRefreshTokenSession(context.Background(), "sig-grace", "access-grace", req))
+		require.NoError(t, store.RotateRefreshToken(context.Background(), "req-grace", "sig-grace"))
+
+		got, err := store.GetRefreshTokenSession(context.Background(), "sig-grace", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "req-grace", got.GetID())
+		require.NoError(t, store.RotateRefreshToken(context.Background(), "req-grace", "sig-grace"), "a grace-period replay may rotate again")
+	})
+
+	t.Run("revoked refresh token is inactive even within the grace period", func(t *testing.T) {
+		store, _, agentRepo, credRepo := newTestFositeStorage()
+		req := setupRequest(t, store, agentRepo, credRepo, "req-revoked", []string{"offline_access"})
+
+		require.NoError(t, store.CreateRefreshTokenSession(context.Background(), "sig-revoked", "access-revoked", req))
+		require.NoError(t, store.RotateRefreshToken(context.Background(), "req-revoked", "sig-revoked"))
+		require.NoError(t, store.RevokeRefreshToken(context.Background(), "req-revoked"))
+
+		_, err := store.GetRefreshTokenSession(context.Background(), "sig-revoked", nil)
+		require.ErrorIs(t, err, fosite.ErrInactiveToken)
+		assert.Error(t, store.RotateRefreshToken(context.Background(), "req-revoked", "sig-revoked"))
 	})
 
 	t.Run("unknown signature returns ErrNotFound", func(t *testing.T) {

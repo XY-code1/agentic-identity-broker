@@ -428,10 +428,16 @@ type RefreshTokenSessionRepository interface {
 	// FindBySignature retrieves a refresh token session by its signature.
 	FindBySignature(ctx context.Context, signature string) (*storage.RefreshTokenSession, error)
 
-	// MarkUsed marks a refresh token session as used or revoked.
+	// MarkUsed records that a refresh token was rotated. It returns a NotFound StorageError when
+	// the token does not exist or was already used.
 	MarkUsed(ctx context.Context, signature string) error
 
-	// RevokeByRequestID revokes all refresh token sessions for a fosite request ID.
+	// MarkRevoked records that a refresh token was revoked. It is idempotent for tokens that are
+	// already used or revoked and returns a NotFound StorageError only for unknown signatures.
+	MarkRevoked(ctx context.Context, signature string) error
+
+	// RevokeByRequestID revokes all refresh token sessions for a fosite request ID, including
+	// tokens that were already rotated.
 	RevokeByRequestID(ctx context.Context, requestID string) error
 
 	// DeleteExpired removes expired refresh token sessions.

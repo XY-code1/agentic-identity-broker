@@ -74,15 +74,38 @@ func (s *RefreshTokenSessionStore) MarkUsed(_ context.Context, signature string)
 	return nil
 }
 
+func (s *RefreshTokenSessionStore) MarkRevoked(_ context.Context, signature string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	session, exists := s.bySignature[signature]
+	if !exists {
+		return storage.NewStorageError("RefreshTokenSessionStore.MarkRevoked", storage.ErrorKindNotFound, nil,
+			fmt.Sprintf("refresh token session with signature %s not found", signature))
+	}
+	now := time.Now()
+	if session.UsedAt == nil {
+		session.UsedAt = &now
+	}
+	if session.RevokedAt == nil {
+		session.RevokedAt = &now
+	}
+	return nil
+}
+
 func (s *RefreshTokenSessionStore) RevokeByRequestID(_ context.Context, requestID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	now := time.Now()
 	for _, session := range s.bySignature {
-		if session.RequestID == requestID && session.UsedAt == nil {
+		if session.RequestID != requestID || session.RevokedAt != nil {
+			continue
+		}
+		if session.UsedAt == nil {
 			session.UsedAt = &now
 		}
+		session.RevokedAt = &now
 	}
 	return nil
 }

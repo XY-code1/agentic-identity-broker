@@ -200,6 +200,7 @@ type oauthResolved struct {
 	localIssuerURI            string
 	localTokenTTL             time.Duration
 	localRefreshTokenTTL      time.Duration
+	localRefreshGracePeriod   time.Duration
 	localClaimsExpression     string
 	responseTypes             []string
 	grantTypes                []string
@@ -231,6 +232,7 @@ func extractOAuthValues(cfg ports.OAuth2ModeConfig, publicURL string) oauthResol
 		}
 		r.localTokenTTL = c.TokenTTL
 		r.localRefreshTokenTTL = c.RefreshTokenTTL
+		r.localRefreshGracePeriod = c.RefreshGracePeriod
 		r.localClaimsExpression = c.TokenClaimsExpression
 		r.responseTypes = c.SupportedResponseTypes
 		r.grantTypes = c.SupportedGrantTypes
@@ -253,6 +255,7 @@ func extractOAuthValues(cfg ports.OAuth2ModeConfig, publicURL string) oauthResol
 		}
 		r.localTokenTTL = c.Local.TokenTTL
 		r.localRefreshTokenTTL = c.Local.RefreshTokenTTL
+		r.localRefreshGracePeriod = c.Local.RefreshGracePeriod
 		r.localClaimsExpression = c.Local.TokenClaimsExpression
 		r.cimdConfig = c.Local.CIMD
 		r.cimdEnabled = c.Local.CIMD.Enabled
@@ -879,6 +882,9 @@ func (b *Builder) Build() (*App, error) {
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create OAuth2 server provider: %w", err)
+		}
+		if ov.localRefreshGracePeriod > 0 {
+			provider.SetRefreshTokenGracePeriod(ov.localRefreshGracePeriod)
 		}
 
 		startupCtx, cancel := newSigningKeyStartupContext(bootstrapTimeout)
