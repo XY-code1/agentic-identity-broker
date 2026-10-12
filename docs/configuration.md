@@ -1222,6 +1222,24 @@ oauth2_authorization_server:
 
 See [OAuth2 server modes](/docs/concepts/oauth2-server-modes) for how the broker issues or proxies tokens.
 
+#### Continuing consent for local refresh
+
+Local refresh requires an active grant for the token's principal and agent. This also applies to locally issued tokens in hybrid mode.
+Grant deletion, expiration, or replacement ends refresh authority. Renewal of expired consent revokes previous sessions. Credential deletion revokes all agent sessions. Agent deletion removes them.
+Consent denial returns the existing `invalid_grant` response without tokens. Verifier or storage errors return `server_error` without rotating the token.
+Grant and credential deletion precede session revocation because these repositories do not share the refresh transaction. A revocation error does not undo deletion.
+
+If deletion commits but refresh cleanup fails, the audit event uses `action=grant_deleted` and `refresh_cleanup=failed`. The request still returns an error. Retrying DELETE returns 404 because the grant is already absent. The event does not report successful session cleanup.
+
+Memory storage rejects a late successor after lifecycle revocation, including renewal that retains the grant ID. Revocation also marks consumed predecessors. Successor insertion and its predecessor check share one lock. PostgreSQL retains the rotation transaction and agent lock through insertion. Neither backend retracts access tokens from a refresh that completed before revocation.
+
+**Accepted limits:**
+
+- A row without `grant_id` gets one rotation on the strength of an older active grant. Its successor stores the grant ID.
+- Old pods do not check consent or lock the agent first. Revocation can still deadlock while old binaries serve traffic during deployment.
+- Existing access tokens remain valid until `token_ttl` expires.
+
+
 ### OAuth2 User Impersonation Configuration
 
 #### oauth2_authorization_server.impersonation

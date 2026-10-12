@@ -430,6 +430,11 @@ type RefreshTokenSessionRepository interface {
 	// Create stores a refresh token session keyed by token signature.
 	Create(ctx context.Context, session *storage.RefreshTokenSession) error
 
+	// CreateSuccessor stores a replacement after MarkUsed consumes its predecessor.
+	// Transactional backends require the same rotation transaction for both calls.
+	// Nontransactional backends atomically reject a missing or revoked predecessor.
+	CreateSuccessor(ctx context.Context, session *storage.RefreshTokenSession, previousSignature string) error
+
 	// FindBySignature retrieves a refresh token session by its signature.
 	FindBySignature(ctx context.Context, signature string) (*storage.RefreshTokenSession, error)
 
@@ -438,6 +443,12 @@ type RefreshTokenSessionRepository interface {
 
 	// RevokeByRequestID revokes all refresh token sessions for a fosite request ID.
 	RevokeByRequestID(ctx context.Context, requestID string) error
+
+	// RevokeByPrincipalAndAgent consumes unused sessions for one principal-agent pair.
+	RevokeByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (int, error)
+
+	// RevokeByAgent consumes all unused sessions for an agent.
+	RevokeByAgent(ctx context.Context, agentID id.AgentID) (int, error)
 
 	// DeleteExpired removes expired refresh token sessions.
 	DeleteExpired(ctx context.Context) (int, error)
