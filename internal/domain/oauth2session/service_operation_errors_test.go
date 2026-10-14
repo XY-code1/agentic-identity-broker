@@ -29,11 +29,16 @@ func (operationBranchKeyManager) Create(context.Context, domainencryption.Branch
 
 type operationSessionRepository struct {
 	ports.UserSessionRepository
-	find func(context.Context, id.Principal, id.ServiceID) (*storage.UserSession, error)
+	find   func(context.Context, id.Principal, id.ServiceID) (*storage.UserSession, error)
+	create func(context.Context, *storage.UserSession) error
 }
 
 func (r operationSessionRepository) FindByPrincipalAndService(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
 	return r.find(ctx, principal, serviceID)
+}
+
+func (r operationSessionRepository) Create(ctx context.Context, session *storage.UserSession) error {
+	return r.create(ctx, session)
 }
 
 type operationRefreshRepository func(context.Context, id.Principal, id.ServiceID, func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error)

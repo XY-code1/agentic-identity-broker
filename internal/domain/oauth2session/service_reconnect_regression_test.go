@@ -2,6 +2,7 @@ package oauth2session
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"sync"
@@ -71,4 +72,45 @@ func TestReconnectWithoutRefreshTokenReplacesConcurrentRotationUnderLock(t *test
 		assert.Equal(t, time.Now().Add(time.Hour), *stored.AccessTokenExpiresAt)
 		assert.Equal(t, []string{"other-scope"}, stored.Scope)
 	})
+}
+
+func TestReconnectLockedFailurePreservesCredentialsWithoutUpsert(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		stageUpdate bool
+	}{
+		{"lock acquisition", false},
+		{"locked write", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service, provider, stored := newOperationTestService(t, io.Discard)
+			before := *stored
+			cause := errors.New("sentinel-locked-reconnect-failure")
+			service.refreshRepo = operationRefreshRepository(func(ctx context.Context, _ id.Principal, _ id.ServiceID, update func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+				if tc.stageUpdate {
+					current := *stored
+					changed, err := update(ctx, &current)
+					require.NoError(t, err)
+					require.True(t, changed)
+				}
+				return nil, cause
+			})
+			createCalls := 0
+			service.sessionRepo = operationSessionRepository{create: func(_ context.Context, session *storage.UserSession) error {
+				createCalls++
+				*stored = *session
+				return nil
+			}}
+
+			session, err := service.createSession(context.Background(), stored.Principal, provider.ID, &oauth2.Token{AccessToken: "other-account-access", Expiry: time.Now().Add(time.Hour)}, []string{"other-scope"})
+
+			assert.Nil(t, session)
+			assert.Equal(t, before, *stored, "failed reconnect must preserve the stored session")
+			assert.Zero(t, createCalls, "failed locked reconnect must not fall back to an upsert")
+			metadata := requireOperationError(t, err, OperationCodeExchange, DetailPersistenceFailed)
+			assert.Equal(t, KindInfrastructure, metadata.Kind())
+			assert.Equal(t, DependencySessionRepository, metadata.Dependency())
+			assert.ErrorIs(t, err, cause)
+		})
+	}
 }
