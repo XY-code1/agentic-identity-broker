@@ -118,7 +118,7 @@ Successful metric observations use `none` for failure stage and detail. Successf
 
 Telemetry excludes resource paths, endpoint URLs, broker descriptions, nested errors, credentials, request headers and bodies, and process command arguments.
 Outbound spans preserve trace propagation and the real network request without recording these values.
-OPA audit data uses bounded actions, result codes, protocols, and allowlisted MCP methods. It excludes policy reasons and request-derived tool or server names.
+OPA audit data uses bounded actions, result codes, protocols, and allowlisted MCP methods. It also includes policy reasons, tool names, and target server names.
 Direct protocol recovery responses still contain the recovery URI. Recovery telemetry values do not instruct ExtProc to retry automatically.
 
 
