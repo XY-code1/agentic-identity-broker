@@ -861,42 +861,37 @@ func TestTokenExchanger_ReAuthCooldown_PreventsRepeatedBrokerCalls(t *testing.T)
 		"broker must not be called during the re-auth cooldown window")
 }
 
-// Spec: When the token cache expires and the broker returns a transient 5xx error,
-// Exchange must serve the stale cached token rather than propagating the error.
-// The stale window (staleUntil) is set once on the first transient failure and is
-// never extended, so the stale period is bounded to one reAuthCooldownTTL interval.
+// Stale fallback is bounded by the reported lifetime, not the shorter fresh cache window.
 func TestTokenExchanger_ExpiredCache_TransientError_ServesStaleToken(t *testing.T) {
 	mocks := newMockServers()
 	defer mocks.Close()
-
 	synctest.Test(t, func(t *testing.T) {
-		shortExpiry := 1 // 1 second — cache expires quickly
-		mocks.exchangeExpiry = &shortExpiry
-
-		cfg := configForMocks(mocks)
-		exchanger, err := server.NewTokenExchanger(cfg, testLogger())
+		expiry := 60
+		mocks.exchangeExpiry = &expiry
+		exchanger, err := server.NewTokenExchanger(configForMocks(mocks), testLogger())
 		require.NoError(t, err)
 		defer exchanger.Shutdown()
-
-		const subjectToken = "stale-fallback-token"
-		const resourceURI = "http://mcp-server:9003/mcp"
-
-		// First call: success, token cached.
-		tok, err := exchanger.Exchange(context.Background(), subjectToken, resourceURI)
+		const subject = "reported-lifetime-token"
+		const resource = "http://mcp-server:9003/mcp"
+		first, err := exchanger.Exchange(context.Background(), subject, resource)
 		require.NoError(t, err)
-		require.Equal(t, "exchanged-access-token", tok.Token)
-
-		// Wait for cache entry to expire.
-		time.Sleep(1100 * time.Millisecond)
-
-		// Broker now returns a transient 5xx error.
-		mocks.exchangeStatus = http.StatusInternalServerError
+		calls := mocks.exchangeCalls
+		mocks.exchangeStatus = http.StatusServiceUnavailable
 		mocks.exchangeErrCode = "server_error"
 
-		// After expiry, Exchange calls broker. Broker returns transient error — serve stale.
-		tok2, err := exchanger.Exchange(context.Background(), subjectToken, resourceURI)
-		require.NoError(t, err, "transient 5xx at expiry must serve stale token, not error")
-		assert.Equal(t, "exchanged-access-token", tok2.Token, "stale cached token must be returned")
+		for i, delay := range []time.Duration{56 * time.Second, 8 * time.Second} {
+			time.Sleep(delay)
+			stale, err := exchanger.Exchange(context.Background(), subject, resource)
+			require.NoError(t, err)
+			assert.Equal(t, first, stale)
+			assert.Equal(t, calls+i+1, mocks.exchangeCalls, "must probe the broker after the 50-second fresh window")
+		}
+		time.Sleep(2 * time.Second)
+		_, err = exchanger.Exchange(context.Background(), subject, resource)
+		var brokerErr *server.BrokerExchangeError
+		require.ErrorAs(t, err, &brokerErr)
+		assert.Equal(t, http.StatusServiceUnavailable, brokerErr.StatusCode)
+		assert.Equal(t, calls+3, mocks.exchangeCalls, "stale fallback must end after the fixed 65-second deadline")
 	})
 }
 

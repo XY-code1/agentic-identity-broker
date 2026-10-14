@@ -544,7 +544,7 @@ components:
           type: string
           format: date-time
           nullable: true
-          description: When the refresh token expires (null if never or unknown)
+          description: Recorded refresh-token expiry, if known. Omission or null does not guarantee that the token never expires.
         is_expired:
           type: boolean
           description: |

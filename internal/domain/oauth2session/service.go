@@ -25,6 +25,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -603,8 +604,8 @@ func (s *OAuth2SessionService) initiateOAuth2Flow(
 	}, nil
 }
 
-// createSession creates and stores a new user session from OAuth2 tokens.
-// Uses upsert semantics: if session exists for (principal, service_id), updates tokens while preserving CreatedAt.
+// createSession stores an authorization-code response under the refresh lock.
+// Reconnects replace both credentials so tokens from different upstream accounts cannot be mixed.
 func (s *OAuth2SessionService) createSession(
 	ctx context.Context,
 	principal id.Principal,
@@ -612,31 +613,17 @@ func (s *OAuth2SessionService) createSession(
 	token *oauth2.Token,
 	scope []string,
 ) (*storage.UserSession, error) {
-	// Check if session already exists for this principal+service
-	existingSession, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, serviceID)
-	if err != nil {
-		failure := sessionOperationError(ctx, OperationCodeExchange, DetailRepositoryUnavailable, err)
-		s.logger.ErrorContext(ctx, "failed to query existing session", "service_id", serviceID, "oauth2_session", failure.Metadata())
-		return nil, failure
-	}
+	// Bind ciphertext to the service so tokens cannot be decrypted under another service's context.
+	encryptionContext := domainencryption.NewServiceBranchKeySubject(serviceID).EncryptionContext()
 
-	var encryptedAccess []byte
-	var encryptedRefresh []byte
-
-	// Create encryption context for this session bound to service (cryptographic service isolation)
-	// This ensures tokens encrypted for one service cannot be decrypted with another service's context
-	serviceSubject := domainencryption.NewServiceBranchKeySubject(serviceID)
-	encryptionContext := serviceSubject.EncryptionContext()
-
-	// Encrypt access token
-	encryptedAccess, err = s.encryption.Encrypt(ctx, []byte(token.AccessToken), encryptionContext)
+	encryptedAccess, err := s.encryption.Encrypt(ctx, []byte(token.AccessToken), encryptionContext)
 	if err != nil {
 		failure := sessionOperationError(ctx, OperationCodeExchange, DetailEncryptionFailed, errors.Join(ErrEncryptionFailed, err))
 		s.logger.ErrorContext(ctx, "failed to encrypt access token", "service_id", serviceID, "oauth2_session", failure.Metadata())
 		return nil, failure
 	}
 
-	// Encrypt refresh token if present
+	var encryptedRefresh []byte
 	if token.RefreshToken != "" {
 		encryptedRefresh, err = s.encryption.Encrypt(ctx, []byte(token.RefreshToken), encryptionContext)
 		if err != nil {
@@ -646,38 +633,43 @@ func (s *OAuth2SessionService) createSession(
 		}
 	}
 
-	// Determine access token expiration
+	now := time.Now()
 	var accessTokenExpiresAt *time.Time
 	if !token.Expiry.IsZero() {
-		accessTokenExpiresAt = &token.Expiry
+		expiry := token.Expiry
+		accessTokenExpiresAt = &expiry
 	}
-
-	// Determine token type (default to Bearer if not specified)
 	tokenType := token.TokenType
 	if tokenType == "" {
 		tokenType = "Bearer"
 	}
 
-	// Create or update session
-	now := time.Now()
-	var sessionID id.SessionID
-	var createdAt time.Time
-	var initiatedAt time.Time
-
-	if existingSession != nil {
-		// Update existing session: preserve ID and CreatedAt
-		sessionID = existingSession.ID
-		createdAt = existingSession.CreatedAt
-		initiatedAt = existingSession.InitiatedAt
-	} else {
-		// Create new session
-		sessionID = id.NewSessionID()
-		createdAt = now
-		initiatedAt = now
+	session, err := s.refreshRepo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+		if current == nil {
+			return false, nil
+		}
+		current.EncryptedRefreshToken = encryptedRefresh
+		current.RefreshTokenExpiresAt = nil
+		current.EncryptedAccessToken = encryptedAccess
+		current.AccessTokenExpiresAt = accessTokenExpiresAt
+		current.TokenType = tokenType
+		current.Scope = scope
+		current.EncryptionContext = storage.EncryptionContext{ServiceID: serviceID}
+		current.UpdatedAt = now
+		return true, nil
+	})
+	if err != nil {
+		failure := sessionOperationError(ctx, OperationCodeExchange, DetailPersistenceFailed, err)
+		s.logger.ErrorContext(ctx, "failed to update existing session", "service_id", serviceID, "oauth2_session", failure.Metadata())
+		return nil, failure
+	}
+	if session != nil {
+		s.logger.Info("session updated", "session_id", session.ID, "principal", principal, "service_id", serviceID)
+		return session, nil
 	}
 
-	session := &storage.UserSession{
-		ID:                    sessionID,
+	session = &storage.UserSession{
+		ID:                    id.NewSessionID(),
 		Principal:             principal,
 		ServiceID:             serviceID,
 		EncryptedAccessToken:  encryptedAccess,
@@ -685,19 +677,20 @@ func (s *OAuth2SessionService) createSession(
 		TokenType:             tokenType,
 		Scope:                 scope,
 		AccessTokenExpiresAt:  accessTokenExpiresAt,
-		InitiatedAt:           initiatedAt,
-		CreatedAt:             createdAt,
+		EncryptionContext:     storage.EncryptionContext{ServiceID: serviceID},
+		InitiatedAt:           now,
+		CreatedAt:             now,
 		UpdatedAt:             now,
 	}
 
-	// Store session (will upsert if already exists)
+	// A concurrent first connect may win the insert; Create upserts on (principal, service_id).
 	if err := s.sessionRepo.Create(ctx, session); err != nil {
 		failure := sessionOperationError(ctx, OperationCodeExchange, DetailPersistenceFailed, err)
 		s.logger.ErrorContext(ctx, "failed to create session", "service_id", serviceID, "oauth2_session", failure.Metadata())
 		return nil, failure
 	}
 
-	s.logger.Info("session created", "session_id", sessionID, "principal", principal, "service_id", serviceID)
+	s.logger.Info("session created", "session_id", session.ID, "principal", principal, "service_id", serviceID)
 	return session, nil
 }
 
@@ -805,22 +798,12 @@ func (s *OAuth2SessionService) HandleCallback(
 }
 
 // RefreshAccessToken calls the upstream OAuth2 service's token endpoint to refresh an expired access token.
-// Uses the provided refresh token to obtain a new access token from the service.
 //
-// Parameters:
-//   - ctx: Context for cancellation and timeout control
-//   - entity: The ThirdpartyOAuth2ProviderEntity configuration containing token endpoint and credentials
-//   - refreshToken: The valid refresh token from the stored session
-//
-// Returns:
-//   - *oauth2.Token with new access_token, optional refresh_token, and expiry
-//   - error if the refresh request fails (network error, invalid response, or upstream error)
-//
-// Per RFC 6749 Section 6, sends a POST request to the token endpoint with:
-//   - grant_type=refresh_token
-//   - refresh_token=<the provided refresh token>
-//   - client_id=<from service config>
-//   - client_secret=<from service config, confidential clients only>
+// Per RFC 6749 Section 6, it posts grant_type=refresh_token with the client credentials the
+// provider's client type requires. Transient provider failures (5xx, 429 and connection errors
+// other than timeouts) are retried with exponential backoff up to Config.MaxRetries attempts,
+// honouring a Retry-After of at most ten seconds. Authoritative 4xx rejections are never retried.
+// CIMD clients sign a fresh client assertion for every attempt.
 func (s *OAuth2SessionService) RefreshAccessToken(
 	ctx context.Context,
 	entity *model.ThirdpartyOAuth2ProviderEntity,
@@ -852,9 +835,8 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		return nil, sessionOperationError(ctx, OperationRefresh, DetailRefreshUnavailable, ErrRefreshNotAvailable)
 	}
 
-	isPublicClient := entity.IsPublicClient()
 	var clientSecret string
-	if !isPublicClient && !isCIMDClient {
+	if !entity.IsPublicClient() && !isCIMDClient {
 		var err error
 		clientSecret, err = entity.Secret.GetPlaintext()
 		if err != nil {
@@ -862,114 +844,153 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		}
 	}
 
+	attempts := max(s.config.MaxRetries, 1)
+	var lastErr error
+	for attempt := range attempts {
+		token, outcome, err := s.refreshOnce(ctx, entity, refreshToken, clientSecret)
+		if err == nil {
+			if isCIMDClient {
+				s.auditCIMDTokenAcquisition(entity.ID, "refresh", "success")
+			}
+			s.logger.InfoContext(ctx, "access token refreshed", "service_id", entity.ID, "operation", OperationRefresh, "attempt", attempt+1)
+			return token, nil
+		}
+		lastErr = err
+		if !outcome.retryable || attempt == attempts-1 || ctx.Err() != nil {
+			break
+		}
+		delay := s.config.RetryBaseDelay * time.Duration(1<<attempt)
+		if outcome.retryAfter > maxRetryAfter {
+			break
+		}
+		delay = max(delay, outcome.retryAfter)
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= delay {
+			break
+		}
+		s.logger.WarnContext(ctx, "token refresh failed, retrying",
+			"event", "session.oauth2.refresh_retry",
+			"service_id", entity.ID,
+			"attempt", attempt+1,
+			"delay", delay,
+			"oauth2_session", sessionFailureMetadata(err))
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			lastErr = sessionOperationError(ctx, OperationRefresh, DetailProviderUnavailable, errors.Join(lastErr, ctx.Err()))
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	if isCIMDClient {
+		s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+	}
+	return nil, lastErr
+}
+
+// refreshAttemptOutcome tells the retry loop whether a failed attempt may be repeated.
+type refreshAttemptOutcome struct {
+	retryable  bool
+	retryAfter time.Duration
+}
+
+// refreshOnce performs a single refresh request against the provider's token endpoint.
+func (s *OAuth2SessionService) refreshOnce(
+	ctx context.Context,
+	entity *model.ThirdpartyOAuth2ProviderEntity,
+	refreshToken string,
+	clientSecret string,
+) (*oauth2.Token, refreshAttemptOutcome, error) {
+	isCIMDClient := entity.IsCIMDConfidentialClient()
 	data := url.Values{}
 	data.Set("grant_type", "refresh_token")
 	data.Set("refresh_token", refreshToken)
 	data.Set("client_id", entity.ClientID.String())
-	if !isPublicClient && !isCIMDClient {
+	if clientSecret != "" {
 		data.Set("client_secret", clientSecret)
 	}
 	addProviderAuthorizationParams(data, entity.AuthorizationParams)
 	if isCIMDClient {
 		if s.cimdAssertionSigner == nil {
-			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
-			return nil, NewOperationError(NewErrorMetadata(OperationRefresh, DetailConfiguration).WithDependency(DependencySigning), ports.ErrCIMDKeyUnavailable)
+			return nil, refreshAttemptOutcome{}, NewOperationError(NewErrorMetadata(OperationRefresh, DetailConfiguration).WithDependency(DependencySigning), ports.ErrCIMDKeyUnavailable)
 		}
 		assertion, err := s.cimdAssertionSigner.SignClientAssertion(ctx, entity.ClientID, entity.Endpoints.TokenEndpoint)
 		if err != nil {
-			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 			failure := sessionOperationError(ctx, OperationRefresh, DetailProviderUnavailable, errors.Join(ports.ErrCIMDKeyUnavailable, err))
-			return nil, failure.WithMetadata(failure.Metadata().WithDependency(DependencySigning))
+			return nil, refreshAttemptOutcome{}, failure.WithMetadata(failure.Metadata().WithDependency(DependencySigning))
 		}
 		data.Set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
 		data.Set("client_assertion", assertion)
 	}
 
-	// Create POST request to token endpoint
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, entity.Endpoints.TokenEndpoint, strings.NewReader(data.Encode()))
 	if err != nil {
-		if isCIMDClient {
-			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
-		}
-		return nil, sessionOperationError(ctx, OperationRefresh, DetailConfiguration, err)
+		return nil, refreshAttemptOutcome{}, sessionOperationError(ctx, OperationRefresh, DetailConfiguration, err)
 	}
-
-	// Set standard OAuth2 headers
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	// Execute the request
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		if isCIMDClient {
-			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
-		}
-		return nil, sessionOperationError(ctx, OperationRefresh, DetailProviderUnavailable, err)
+		// A timed-out attempt already consumed the full upstream budget; repeating it only
+		// extends how long the session row stays locked.
+		var urlErr *url.Error
+		retryable := errors.As(err, &urlErr) && !urlErr.Timeout() && ctx.Err() == nil
+		return nil, refreshAttemptOutcome{retryable: retryable}, sessionOperationError(ctx, OperationRefresh, DetailProviderUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if isCIMDClient {
-			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+		outcome := refreshAttemptOutcome{
+			retryable:  resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 && resp.StatusCode <= 599,
+			retryAfter: retryAfter(resp.Header.Get("Retry-After"), time.Now()),
 		}
-		return nil, thirdpartyRefreshError(resp)
+		failure := thirdpartyRefreshError(resp)
+		var timeoutErr net.Error
+		if errors.As(failure, &timeoutErr) && timeoutErr.Timeout() {
+			outcome.retryable = false
+		}
+		return nil, outcome, failure
 	}
 
 	var tokenResp struct {
-		AccessToken  string `json:"access_token"`
-		TokenType    string `json:"token_type"`
-		ExpiresIn    int64  `json:"expires_in"`
-		RefreshToken string `json:"refresh_token,omitempty"`
-		Scope        string `json:"scope,omitempty"`
+		AccessToken  string          `json:"access_token"`
+		TokenType    string          `json:"token_type"`
+		ExpiresIn    lifetimeSeconds `json:"expires_in"`
+		RefreshToken string          `json:"refresh_token,omitempty"`
+		Scope        string          `json:"scope,omitempty"`
 	}
 	limited := &io.LimitedReader{R: resp.Body, N: maxTokenResponseBytes + 1}
 	if err := json.NewDecoder(limited).Decode(&tokenResp); err != nil {
-		if isCIMDClient {
-			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
-		}
-		return nil, refreshResponseError(ctx, resp.StatusCode, err)
+		return nil, refreshAttemptOutcome{}, refreshResponseError(ctx, resp.StatusCode, err)
 	}
 	if _, err := io.Copy(io.Discard, limited); err != nil {
-		if isCIMDClient {
-			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
-		}
-		return nil, refreshResponseError(ctx, resp.StatusCode, err)
+		return nil, refreshAttemptOutcome{}, refreshResponseError(ctx, resp.StatusCode, err)
 	}
 	if limited.N == 0 {
-		if isCIMDClient {
-			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
-		}
-		return nil, refreshResponseError(ctx, resp.StatusCode, fmt.Errorf("upstream token response exceeds %d byte limit", maxTokenResponseBytes))
+		return nil, refreshAttemptOutcome{}, refreshResponseError(ctx, resp.StatusCode, fmt.Errorf("upstream token response exceeds %d byte limit", maxTokenResponseBytes))
 	}
-
-	// Validate required fields in response
 	if tokenResp.AccessToken == "" {
-		if isCIMDClient {
-			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
-		}
-		return nil, refreshResponseError(ctx, resp.StatusCode, errors.New("upstream token response missing access_token"))
+		return nil, refreshAttemptOutcome{}, refreshResponseError(ctx, resp.StatusCode, errors.New("upstream token response missing access_token"))
 	}
 
-	// Determine token expiry
 	var expiry time.Time
 	if tokenResp.ExpiresIn > 0 {
 		expiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 	}
-
-	// Build oauth2.Token
-	token := &oauth2.Token{
+	extra := map[string]any{}
+	if tokenResp.Scope != "" {
+		extra["scope"] = tokenResp.Scope
+	}
+	token := (&oauth2.Token{
 		AccessToken:  tokenResp.AccessToken,
 		TokenType:    tokenResp.TokenType,
 		RefreshToken: tokenResp.RefreshToken,
 		Expiry:       expiry,
-	}
-	if isCIMDClient {
-		s.auditCIMDTokenAcquisition(entity.ID, "refresh", "success")
-	}
-
-	s.logger.InfoContext(ctx, "access token refreshed", "service_id", entity.ID, "operation", OperationRefresh)
-
-	return token, nil
+	}).WithExtra(extra)
+	return token, refreshAttemptOutcome{}, nil
 }
 
 const maxThirdpartyErrorBodyBytes = 64 << 10
@@ -1033,13 +1054,13 @@ func (s *OAuth2SessionService) setSessionTokens(ctx context.Context, session *st
 		session.AccessTokenExpiresAt = nil
 	}
 
-	// Update refresh token if provided in response
 	if newToken.RefreshToken != "" {
 		encryptedRefresh, err := s.encryption.Encrypt(ctx, []byte(newToken.RefreshToken), encContext)
 		if err != nil {
 			return sessionOperationError(ctx, OperationRefresh, DetailEncryptionFailed, errors.Join(ErrEncryptionFailed, err))
 		}
 		session.EncryptedRefreshToken = encryptedRefresh
+		session.RefreshTokenExpiresAt = nil
 	}
 
 	// Update timestamp

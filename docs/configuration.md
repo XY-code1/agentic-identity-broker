@@ -544,6 +544,24 @@ request_context:
     response_enabled: true
 ```
 
+#### Third-Party OAuth2 Session Configuration
+
+These options control the authorization-code flow and token refresh for third-party service connections.
+
+| Option | Type | Default Value | Valid Values | Required? | Environment Variable | CLI Flag | Description |
+|--------|------|---------------|--------------|-----------|----------------------|----------|-------------|
+| `third_party_oauth2.jwe_signing_key` | string | — | Base64, 32 bytes decoded | Yes | `IDENTITY_BROKER_JWE_SIGNING_KEY` | — | Key that encrypts OAuth2 state tokens. |
+| `third_party_oauth2.state_token_ttl` | duration | `10m` | Up to `15m` | No | `IDENTITY_BROKER_STATE_TOKEN_TTL` | — | Lifetime of the OAuth2 state token between authorize and callback. |
+| `third_party_oauth2.pkce_verifier_length` | integer | `32` | `32`–`128` | No | `IDENTITY_BROKER_PKCE_VERIFIER_LENGTH` | — | PKCE verifier length in bytes (RFC 7636). |
+
+**Refresh notes:**
+
+- Token exchange returns a still-valid access token immediately. Within `token_refresh.lookahead_duration` (default `5m`), a usable refresh token allows background refresh without delaying the response. Failed or dropped background work does not change the response.
+- Refresh retries HTTP 5xx, 429 and connection failures up to three attempts with exponential backoff (1s, 2s). It honors a `Retry-After` of at most 10 seconds. It does not retry other 4xx rejections or timeouts, including timeouts while reading error-response bodies.
+- If a reconnect omits `refresh_token`, the broker accepts the new access token and clears the stored refresh token and its recorded expiry. This prevents combining credentials from different upstream accounts. The connection requires login again after the new access token expires. To restore automatic refresh, obtain a new refresh token through provider consent. For providers that require it, configure `prompt=consent` through the service's authorization parameters.
+- The broker does not infer refresh-token expiry from provider-specific lifetime fields. An unknown expiry does not guarantee indefinite validity. Provider rejection remains authoritative.
+- The broker accepts access-token `expires_in` values as JSON numbers or numeric strings. Refresh persists the recorded expiries, token type, and scope.
+
 **Notes:**
 
 - All configuration options have built-in defaults and are optional unless marked "Required"

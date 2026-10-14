@@ -902,6 +902,9 @@ paths:
         - Exchanges authorization code for access/refresh tokens (with PKCE)
         - Encrypts tokens using EncryptionPort
         - Stores session in database
+        - Reconnects replace the existing access token. If the response omits refresh_token,
+          the broker clears the stored refresh token and its expiry to prevent mixing upstream accounts.
+          The connection requires login again after the new access token expires.
         - Redirects to the original redirect_uri with success=true and service_id;
           for form-initiated flows, also adds the validated consent_state_id so the
           originating tab can recover its return-page data and remove that ID from the URL
@@ -3661,6 +3664,7 @@ components:
           type: string
           format: date-time
           nullable: true
+          description: Recorded refresh-token expiry, if known. Omission or null does not guarantee that the token never expires.
         dependent_agent_count:
           type: integer
           minimum: 0
@@ -3696,7 +3700,7 @@ components:
           type: string
           format: date-time
           nullable: true
-          description: When the refresh token expires (null if never or unknown)
+          description: Recorded refresh-token expiry, if known. Omission or null does not guarantee that the token never expires.
         is_expired:
           type: boolean
           description: |

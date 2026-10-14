@@ -49,8 +49,11 @@ third_party_oauth2:
   pkce_verifier_length: 32
 
 # Proactive refresh of third-party access tokens (spec 029).
-# Tokens are refreshed in the background when token exchange serves a token that
-# expires within lookahead_duration, and by POST /api/sessions/sweep on the admin server.
+# Token exchange returns a valid token immediately. If it expires within
+# lookahead_duration and has a usable refresh token, the broker submits background
+# refresh without waiting.
+# Failed or dropped background work does not change the exchange response.
+# POST /api/sessions/sweep on the admin server also refreshes due tokens.
 token_refresh:
   # Refresh access tokens this long before they expire. Must be shorter than the access-token
   # lifetime your providers issue; otherwise every exchange triggers a refresh.

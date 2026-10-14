@@ -140,7 +140,11 @@ A successful third-party exchange returns `200 OK` with `Content-Type: applicati
 | `refresh_token` | Optional | A refresh token — typically absent, since the broker manages refresh. |
 | `granted_permission_sets` | Optional | Map of permission-set UUID → array of service UUIDs, when the exchange is scoped to specific permission sets. |
 
-When a stored access token expires, the broker refreshes it using the stored refresh token. Concurrent exchanges for the same principal and service share a refresh in one process; across replicas, the broker locks and re-reads the session before refreshing and committing rotated tokens.
+Token exchange returns a still-valid stored access token immediately. If it expires within `token_refresh.lookahead_duration` (default `5m`) and has a usable refresh token, the broker submits background refresh work. The exchange does not wait for that work. A failed or dropped background refresh does not change the response. The lookahead window does not guarantee a minimum remaining lifetime for the returned token.
+
+After the stored access token expires, the broker waits for an on-demand refresh using the stored refresh token. Concurrent refreshes for the same principal and service share work in one process. Across replicas, the broker locks and re-reads the session before refreshing and committing rotated tokens.
+
+Refresh retries transient provider failures (HTTP 5xx, 429, connection errors) with up to three attempts and exponential backoff (1s, 2s). It honors `Retry-After` up to 10 seconds and does not retry timeouts or other HTTP 4xx responses. The broker accepts access-token `expires_in` as a JSON number or numeric string and persists recorded expiries, token type, and scope.
 
 ### Success example
 

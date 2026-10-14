@@ -495,16 +495,16 @@ func TestSessionSweepRealRefreshCommitsBeforeSuccessAndMetrics(t *testing.T) {
 
 func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T) {
 	for _, tc := range []struct {
-		name           string
-		modify         func(*sweepFixture, *storage.UserSession)
-		response       int
-		wantFail       int
-		wantSkip       int
-		wantCalls      int32
-		wantLevel      string
-		wantDetail     oauth2session.ErrorDetail
-		wantKind       oauth2session.ErrorKind
-		wantDependency oauth2session.Dependency
+		name             string
+		modify           func(*sweepFixture, *storage.UserSession)
+		response         int
+		wantFail         int
+		wantSkip         int
+		wantProviderCall bool
+		wantLevel        string
+		wantDetail       oauth2session.ErrorDetail
+		wantKind         oauth2session.ErrorKind
+		wantDependency   oauth2session.Dependency
 	}{
 		{name: "no refresh token", wantFail: 1, wantLevel: "WARN", wantDetail: oauth2session.DetailRefreshUnavailable, wantKind: oauth2session.KindSession, wantDependency: oauth2session.DependencySessionRepository},
 		{name: "expired refresh token", wantFail: 1, wantLevel: "WARN", wantDetail: oauth2session.DetailRefreshTokenExpired, wantKind: oauth2session.KindSession, wantDependency: oauth2session.DependencySessionRepository},
@@ -521,8 +521,8 @@ func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T
 				require.NoError(f.t, err)
 			}
 		}, wantSkip: 1},
-		{name: "provider rejection", response: http.StatusBadRequest, wantFail: 1, wantCalls: 1, wantLevel: "WARN", wantDetail: oauth2session.DetailRefreshRejected, wantKind: oauth2session.KindProvider, wantDependency: oauth2session.DependencyProvider},
-		{name: "provider unavailable", response: http.StatusServiceUnavailable, wantFail: 1, wantCalls: 1, wantLevel: "WARN", wantDetail: oauth2session.DetailProviderUnavailable, wantKind: oauth2session.KindInfrastructure, wantDependency: oauth2session.DependencyProvider},
+		{name: "provider rejection", response: http.StatusBadRequest, wantFail: 1, wantProviderCall: true, wantLevel: "WARN", wantDetail: oauth2session.DetailRefreshRejected, wantKind: oauth2session.KindProvider, wantDependency: oauth2session.DependencyProvider},
+		{name: "provider unavailable", response: http.StatusServiceUnavailable, wantFail: 1, wantProviderCall: true, wantLevel: "WARN", wantDetail: oauth2session.DetailProviderUnavailable, wantKind: oauth2session.KindInfrastructure, wantDependency: oauth2session.DependencyProvider},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := sdkmetric.NewManualReader()
@@ -531,15 +531,17 @@ func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T
 			otel.SetMeterProvider(meterProvider)
 			t.Cleanup(func() { otel.SetMeterProvider(previous); _ = meterProvider.Shutdown(context.Background()) })
 			f := newSweepFixture(t)
-			var calls atomic.Int32
+			var firstContacted atomic.Bool
 			f.provider(func(w http.ResponseWriter, r *http.Request) {
-				calls.Add(1)
 				assert.NoError(t, r.ParseForm())
-				if r.Form.Get("refresh_token") == "refresh-1" && tc.response != 0 {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(tc.response)
-					_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
-					return
+				if r.Form.Get("refresh_token") == "refresh-1" {
+					firstContacted.Store(true)
+					if tc.response != 0 {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(tc.response)
+						_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
+						return
+					}
 				}
 				sweepSuccess(w)
 			})
@@ -560,7 +562,7 @@ func TestSessionSweepFailedAndSkippedCandidatesDoNotStopNextRefresh(t *testing.T
 			result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{})
 			require.NoError(t, err, "a single candidate must not abort the remaining sweep")
 			assertSweepCounts(t, result, 1, tc.wantSkip, tc.wantFail, false)
-			assert.EqualValues(t, 1+tc.wantCalls, calls.Load())
+			assert.Equal(t, tc.wantProviderCall, firstContacted.Load())
 			assert.Equal(t, 2, f.refresh.locks)
 			persisted, err := f.repo.Get(context.Background(), sweepSessionID(2))
 			require.NoError(t, err)
