@@ -327,8 +327,7 @@ Established authenticated actor and calling-peer audit fields remain unchanged.
 Span status descriptions are static. Raw errors never become exception events.
 
 ExtProc records only observed stages and uses `unknown` for unreported broker exchange profiles.
-OPA audit data retains bounded action, result code, protocol, allowlisted MCP method, and duration.
-It excludes policy reasons and request-derived tool or target-server names.
+OPA audit data retains action, result code, protocol, allowlisted MCP method, duration, policy reasons, tool name, and target server name.
 
 Outbound instrumentation propagates trace context and preserves the actual request URL, body, and headers for the dependency.
 It records only bounded method/status/error kind. Token-endpoint inbound instrumentation uses a credential-free request view, then restores the original request before handling it.

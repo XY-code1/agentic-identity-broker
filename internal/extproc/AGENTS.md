@@ -98,7 +98,7 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 | `OPAInput` map alias | OPA document from the opa-envoy-plugin-compatible base, with top-level `type`, `mcp`, and `context` keys |
 | `mcp` input object | Map of decoded MCP fields and agentgateway target-server metadata; omit fields irrelevant to the request type |
 | `ContextInput` struct | Authorization context fields, including `granted_permission_sets_available` and token-bound `granted_permission_sets` when present |
-| `OPADecision` struct | Policy output: `Action string` (`"allow"` or `"deny"`), `Reasons []string` |
+| `OPADecision` struct | Policy output: `Action string` (`"allow"`, `"deny"`, or `"approval_required"`), `Reasons []string`, optional `ApprovalContext` |
 | `ParseDecision(any)` | Type-safe extraction of `action` and `reasons` from the OPA result map |
 | `NewInputBuilder(protocol, headers, targetServerName, contextInput)` | Converts Envoy-compatible headers once; `Build(body, parsed)` derives independent policy inputs for standalone and batch elements |
 | `ParseMCPMessage(value)` | Validates one decoded JSON-RPC 2.0 message → `*MCPMessage` |
