@@ -3,6 +3,7 @@ package oauth2session
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"strconv"
@@ -11,20 +12,25 @@ import (
 )
 
 // lifetimeSeconds decodes a token-endpoint lifetime sent as a JSON number or numeric string.
-// A value it cannot interpret is treated as absent so that a malformed lifetime never discards
-// an otherwise valid token.
 type lifetimeSeconds int64
 
 func (l *lifetimeSeconds) UnmarshalJSON(data []byte) error {
-	var number json.Number
-	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) || json.Unmarshal(data, &number) != nil {
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return nil
 	}
-	if seconds, ok := numberSeconds(number.String()); ok {
-		*l = lifetimeSeconds(seconds)
+	var number json.Number
+	if err := json.Unmarshal(data, &number); err != nil {
+		return errors.New("invalid expires_in lifetime")
 	}
+	seconds, ok := numberSeconds(number.String())
+	if !ok {
+		return errors.New("invalid expires_in lifetime")
+	}
+	*l = lifetimeSeconds(seconds)
 	return nil
 }
+
+const maxLifetimeSeconds = int64(math.MaxInt64) / int64(time.Second)
 
 func numberSeconds(value string) (int64, bool) {
 	value = strings.TrimSpace(value)
@@ -32,11 +38,21 @@ func numberSeconds(value string) (int64, bool) {
 		return 0, false
 	}
 	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
-		return max(seconds, 0), true
+		return max(seconds, 0), seconds <= maxLifetimeSeconds
+	} else if errors.Is(err, strconv.ErrRange) {
+		return 0, false
 	}
 	seconds, err := strconv.ParseFloat(value, 64)
-	if err != nil || math.IsNaN(seconds) || math.IsInf(seconds, 0) || seconds > math.MaxInt32 {
+	if err != nil || math.IsNaN(seconds) || math.IsInf(seconds, 0) || seconds > float64(maxLifetimeSeconds) || seconds < math.MinInt64 {
 		return 0, false
+	}
+	if seconds >= 0 && seconds < 1 {
+		// ParseFloat can underflow a positive lifetime to zero without an error.
+		mantissa, _, _ := strings.Cut(value, "e")
+		mantissa, _, _ = strings.Cut(mantissa, "E")
+		if strings.ContainsAny(mantissa, "123456789") {
+			return 0, false
+		}
 	}
 	return int64(max(seconds, 0)), true
 }

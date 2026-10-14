@@ -209,6 +209,44 @@ func TestRefreshAccessToken_AcceptsStringExpiresIn(t *testing.T) {
 	assert.WithinDuration(t, time.Now().Add(time.Hour), token.Expiry, time.Minute)
 }
 
+func TestRefreshAccessToken_RejectsUnusableExpiresIn(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		lifetime string
+	}{
+		{name: "malformed string", lifetime: `"soon"`},
+		{name: "object", lifetime: `{"seconds":3600}`},
+		{name: "boolean", lifetime: `true`},
+		{name: "array", lifetime: `[3600]`},
+		{name: "empty string", lifetime: `""`},
+		{name: "positive fraction", lifetime: `0.5`},
+		{name: "positive fractional string", lifetime: `"0.5"`},
+		{name: "positive underflow", lifetime: `1e-1000`},
+		{name: "duration overflow", lifetime: `9223372037`},
+		{name: "integer overflow", lifetime: `9223372036854775808`},
+		{name: "negative integer overflow", lifetime: `-9223372036854775809`},
+		{name: "float overflow", lifetime: `1e1000`},
+		{name: "not a number", lifetime: `"NaN"`},
+		{name: "infinity", lifetime: `"Inf"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service, _, _, _, _, _ := setupServiceWithConfig(t, nil)
+			upstream, calls := jsonTokenEndpoint(func(_ url.Values, _ int32) (int, string) {
+				return http.StatusOK, fmt.Sprintf(`{"access_token":"new-access","token_type":"Bearer","expires_in":%s}`, tc.lifetime)
+			})
+			defer upstream.Close()
+			provider := createTestService(id.NewServiceID())
+			provider.Endpoints.TokenEndpoint = upstream.URL
+
+			token, err := service.RefreshAccessToken(context.Background(), provider, "stored-refresh")
+			metadata := assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailProviderResponseInvalid)
+			assert.Equal(t, http.StatusOK, metadata.StatusCode())
+			assert.Nil(t, token, "unusable lifetime must not produce a non-expiring token")
+			assert.EqualValues(t, 1, calls.Load(), "invalid lifetime metadata must not be retried")
+		})
+	}
+}
+
 func TestRefreshSession_RFC6749RefreshTokenRetentionAndRotation(t *testing.T) {
 	for _, tc := range []struct {
 		name         string

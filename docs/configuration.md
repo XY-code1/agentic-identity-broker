@@ -560,7 +560,7 @@ These options control the authorization-code flow and token refresh for third-pa
 - Refresh retries HTTP 5xx, 429 and connection failures up to three attempts with exponential backoff (1s, 2s). It honors a `Retry-After` of at most 10 seconds. It does not retry other 4xx rejections or timeouts, including timeouts while reading error-response bodies.
 - If a reconnect omits `refresh_token`, the broker accepts the new access token and clears the stored refresh token and its recorded expiry. This prevents combining credentials from different upstream accounts. The connection requires login again after the new access token expires. To restore automatic refresh, obtain a new refresh token through provider consent. For providers that require it, configure `prompt=consent` through the service's authorization parameters.
 - The broker does not infer refresh-token expiry from provider-specific lifetime fields. An unknown expiry does not guarantee indefinite validity. Provider rejection remains authoritative.
-- The broker accepts access-token `expires_in` values as JSON numbers or numeric strings. Refresh persists the recorded expiries, token type, and scope.
+- The broker accepts access-token `expires_in` values as JSON numbers or numeric strings. During refresh, absent or null metadata leaves expiry unspecified. Malformed or unrepresentable values, including positive lifetimes below one second, fail with `provider_response_invalid` instead of producing a non-expiring token. Other positive fractions are truncated to whole seconds. Refresh persists the recorded expiries, token type, and scope.
 
 **Notes:**
 

@@ -146,6 +146,8 @@ After the stored access token expires, the broker waits for an on-demand refresh
 
 Refresh retries transient provider failures (HTTP 5xx, 429, connection errors) with up to three attempts and exponential backoff (1s, 2s). It honors `Retry-After` up to 10 seconds and does not retry timeouts or other HTTP 4xx responses. The broker accepts access-token `expires_in` as a JSON number or numeric string and persists recorded expiries, token type, and scope.
 
+During refresh, absent or null `expires_in` metadata leaves expiry unspecified. Malformed or unrepresentable values, including positive lifetimes below one second, fail with `provider_response_invalid` instead of producing a non-expiring token. Other positive fractions are truncated to whole seconds.
+
 ### Success example
 
 ```bash

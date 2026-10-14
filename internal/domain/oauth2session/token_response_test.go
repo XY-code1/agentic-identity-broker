@@ -19,12 +19,15 @@ func TestLifetimeSeconds_DecodesNumbersAndNumericStrings(t *testing.T) {
 		{name: "integer", body: `{"v":3600}`, seconds: 3600},
 		{name: "numeric string", body: `{"v":"3600"}`, seconds: 3600},
 		{name: "float", body: `{"v":3599.9}`, seconds: 3599},
+		{name: "exponent", body: `{"v":3.6e3}`, seconds: 3600},
+		{name: "whole second", body: `{"v":1.0}`, seconds: 1},
+		{name: "largest duration", body: `{"v":9223372036}`, seconds: 9223372036},
+		{name: "largest duration as float", body: `{"v":9223372036.0}`, seconds: 9223372036},
 		{name: "zero", body: `{"v":0}`, seconds: 0},
+		{name: "zero with exponent", body: `{"v":0e10}`, seconds: 0},
 		{name: "negative clamps to zero", body: `{"v":-5}`, seconds: 0},
 		{name: "null", body: `{"v":null}`},
 		{name: "absent", body: `{}`},
-		{name: "garbage string is ignored", body: `{"v":"soon"}`},
-		{name: "object is ignored", body: `{"v":{"seconds":1}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var decoded struct {
