@@ -878,7 +878,6 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		case <-timer.C:
 		case <-ctx.Done():
 			timer.Stop()
-			lastErr = sessionOperationError(ctx, OperationRefresh, DetailProviderUnavailable, errors.Join(lastErr, ctx.Err()))
 		}
 		if ctx.Err() != nil {
 			break

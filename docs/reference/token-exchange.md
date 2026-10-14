@@ -301,6 +301,7 @@ Session `OperationError` carries immutable operation/detail/kind/dependency/stat
 Origin metadata maps to exchange diagnostics without inspecting error text.
 ExtProc `OperationError` captures its diagnostic once at construction. Callers cannot override that snapshot.
 Individual caller cancellation is `canceled` at its current stage. Shared-operation and dependency deadlines remain infrastructure failures.
+Cancellation during provider refresh backoff retains the last provider error as a cause, including its dependency, HTTP status, and allowlisted OAuth error code.
 
 Telemetry identifies registered services with `token_exchange.service.id`, not requested URIs or service display names.
 Broker exchange logs and spans also carry scalar resolved authorization context; these fields are not metric labels or response fields:
