@@ -121,8 +121,8 @@ func setupThirdpartyProviderTestHarnessWithDatabase(
 		require.NoError(t, err)
 		migrationsDir, err := filepath.Abs(filepath.Join(projectRoot, "migrations"))
 		require.NoError(t, err)
-
-		migrationRunner, err := migrate.New("file://"+migrationsDir, sharedPostgres.ConnectionString(dbName))
+		migrationConnStr := sharedPostgres.ConnectionString(dbName)
+		migrationRunner, err := migrate.New("file://"+migrationsDir, migrationConnStr)
 		require.NoError(t, err)
 		defer func() { _, _ = migrationRunner.Close() }()
 

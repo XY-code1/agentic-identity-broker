@@ -172,12 +172,13 @@ func (pg *SharedPostgres) ConnectionString(dbName string) string {
 func (pg *SharedPostgres) ApplyMigrationsUpTo(t *testing.T, dbName string, migrations []SQLMigration, upTo int) {
 	t.Helper()
 
+	migrationsDir := projectMigrationsDir(t)
 	pg.CreateSchemaMigrationsTable(t, dbName)
 	for _, migration := range migrations {
 		if int(migration.Version) > upTo {
 			break
 		}
-		pg.ApplyMigration(t, dbName, migration.File)
+		pg.applyMigration(t, dbName, migrationsDir, migration.File)
 		pg.recordMigrationVersion(t, dbName, migration.Version)
 	}
 }
@@ -195,13 +196,20 @@ func (pg *SharedPostgres) CreateSchemaMigrationsTable(t *testing.T, dbName strin
 func (pg *SharedPostgres) ApplyMigration(t *testing.T, dbName, filename string) {
 	t.Helper()
 
+	pg.applyMigration(t, dbName, projectMigrationsDir(t), filename)
+}
+
+func projectMigrationsDir(t *testing.T) string {
+	t.Helper()
 	projectRoot, err := FindProjectRoot()
 	require.NoError(t, err, "Failed to find project root")
+	return filepath.Join(projectRoot, "migrations")
+}
 
-	migrationPath := filepath.Join(projectRoot, "migrations", filename)
-	data, err := os.ReadFile(migrationPath) // #nosec G304 -- test helper reads repository-owned migration filenames.
+func (pg *SharedPostgres) applyMigration(t *testing.T, dbName, migrationsDir, filename string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(migrationsDir, filename)) // #nosec G304 -- test helper reads repository-owned migration filenames.
 	require.NoErrorf(t, err, "Failed to read migration file %s", filename)
-
 	pg.ExecuteSQL(t, dbName, string(data))
 }
 

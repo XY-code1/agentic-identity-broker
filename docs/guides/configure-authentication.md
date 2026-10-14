@@ -95,8 +95,7 @@ Configure `server.enduser.authentication.jwt` and `server.admin.authentication.j
 Each server uses its own header, verification mode, and claim-extraction expressions. A
 `preauth` block is needed only if JWT is not configured. When JWT is configured, a missing
 or invalid JWT cannot fall back to the plain principal header. Required-principal routes
-return `401 Unauthorized`; admin CIMD key mutations without an operator principal return
-`server_misconfiguration` without generating a key.
+return `401 Unauthorized`. Admin CIMD key mutations and `POST /api/sessions/sweep` without an operator principal return `server_misconfiguration`; they do not generate a key or start a sweep.
 
 ### Use a JWKS
 
@@ -189,7 +188,7 @@ Adjust each expression to match the claim names your identity provider emits.
 - **The wrong user is authenticated, or outside clients authenticate.** The broker accepts
   the header from an untrusted source. Make sure that only the proxy can reach broker ports.
   Make sure that the proxy removes each client-supplied copy before it adds its own value.
-- **Admin CIMD key creation reports `server_misconfiguration`.** Check the admin server's
+- **Admin CIMD key creation or a session sweep reports `server_misconfiguration`.** Check the admin server's
   effective `authentication.jwt` configuration, the broker's JWT-authenticator wiring, and
   whether the trusted gateway supplies the configured JWT header with a non-empty
   `principal` claim. Do not work around this by sending an unsigned header from a client.

@@ -591,7 +591,7 @@ func (b *Builder) Build() (*App, error) {
 
 	// Build service configuration from application config
 	// Constitution Principle VII: Configuration-Driven Design
-	cfg := oauth2session.NewConfigFromPorts(b.config.ThirdPartyOAuth2, b.config.Server.EndUser.PublicURL)
+	cfg := oauth2session.NewConfigFromPorts(b.config.ThirdPartyOAuth2, b.config.TokenRefresh, b.config.Server.EndUser.PublicURL)
 	readTimeout := b.config.Storage.Timeouts.Read
 	if readTimeout <= 0 {
 		readTimeout = 5 * time.Second
@@ -836,6 +836,8 @@ func (b *Builder) Build() (*App, error) {
 		PermissionSets:     admin.NewPermissionSetsHandler(app.PermissionSetService, app.ProviderService, b.logger),
 		CIMDClientKeys:     admin.NewCIMDClientKeysHandler(app.CIMDKeyService, b.logger),
 	}
+	app.AdminHandlers.SessionSweep = admin.NewSessionSweepHandler(
+		oauth2session.NewSessionSweepService(b.storage.SessionExpiry(), app.OAuth2SessionService, b.logger), b.logger)
 
 	agentDetailHandler := consent.NewAgentDetailHandler(app.ConsentService, b.logger, app.SessionTokenService)
 
@@ -1178,6 +1180,16 @@ func (b *Builder) Build() (*App, error) {
 		CIMDMetadata:         enduserHandlers.NewCIMDMetadataHandler(app.CIMDMetadataProvider, b.logger),
 		JWKS:                 jwksHandler,
 		SPA:                  handlers.NewSPAHandler(b.staticWebResourcesPath, b.logger),
+	}
+
+	// Drain admitted refreshes while telemetry and the upstream transport are still live.
+	prevSessionShutdown := app.Shutdown
+	app.Shutdown = func(ctx context.Context) error {
+		refreshErr := app.OAuth2SessionService.Close(ctx)
+		if prevSessionShutdown != nil {
+			return errors.Join(refreshErr, prevSessionShutdown(ctx))
+		}
+		return refreshErr
 	}
 
 	// Start maintenance only after all fallible construction has completed.

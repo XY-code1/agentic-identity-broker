@@ -1170,6 +1170,37 @@
             }
           }
         },
+        "tokenRefresh": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Proactive third-party access-token refresh configuration",
+          "properties": {
+            "lookaheadDuration": {
+              "type": "string",
+              "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+              "description": "Refresh lookahead as a Go duration; keep shorter than provider access-token lifetimes"
+            },
+            "backgroundWorkers": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20,
+              "description": "Concurrent background refreshes per replica; cap reserves 5 of 25 database connections"
+            },
+            "sweep": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "External admin session sweep configuration",
+              "properties": {
+                "defaultPageSize": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000,
+                  "description": "Default sessions per admin sweep page"
+                }
+              }
+            }
+          }
+        },
         "security": {
           "type": "object",
           "additionalProperties": false,

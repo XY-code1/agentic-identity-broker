@@ -279,13 +279,21 @@ func applyMigrations(t *testing.T, container testcontainers.Container) {
 	applyMigrationsToDatabase(t, container, "testdb")
 }
 
+func newTestMigrationRunner(t *testing.T, dbName string) *migrate.Migrate {
+	t.Helper()
+	projectRoot, err := findProjectRoot()
+	require.NoError(t, err)
+	migrationsDir := filepath.Join(projectRoot, "migrations")
+	connStr := buildConnString(dbName)
+	m, err := migrate.New("file://"+migrationsDir, connStr)
+	require.NoError(t, err)
+	return m
+}
+
 func applyMigrationsToDatabase(t *testing.T, _ testcontainers.Container, dbName string) {
 	t.Helper()
 
-	projectRoot, err := findProjectRoot()
-	require.NoError(t, err)
-	m, err := migrate.New("file://"+filepath.Join(projectRoot, "migrations"), buildConnString(dbName))
-	require.NoError(t, err)
+	m := newTestMigrationRunner(t, dbName)
 	defer func() { _, _ = m.Close() }()
 	require.NoError(t, m.Up())
 }
@@ -300,10 +308,7 @@ func applyMigrationsUpTo(t *testing.T, container testcontainers.Container, upTo 
 func applyMigrationsUpToDatabase(t *testing.T, _ testcontainers.Container, dbName string, upTo int) {
 	t.Helper()
 
-	projectRoot, err := findProjectRoot()
-	require.NoError(t, err)
-	m, err := migrate.New("file://"+filepath.Join(projectRoot, "migrations"), buildConnString(dbName))
-	require.NoError(t, err)
+	m := newTestMigrationRunner(t, dbName)
 	defer func() { _, _ = m.Close() }()
 	require.NoError(t, m.Migrate(uint(upTo)))
 }

@@ -46,6 +46,18 @@ type Config struct {
 	Telemetry        TelemetryConfig        `mapstructure:"telemetry"`
 	RequestContext   RequestContextConfig   `mapstructure:"request_context"`
 	Approvals        ApprovalsConfig        `mapstructure:"approvals"`
+	TokenRefresh     TokenRefreshConfig     `mapstructure:"token_refresh"`
+}
+
+// TokenRefreshConfig declares the proactive refresh settings for production configuration.
+type TokenRefreshConfig struct {
+	LookaheadDuration time.Duration           `mapstructure:"lookahead_duration"`
+	BackgroundWorkers int                     `mapstructure:"background_workers"`
+	Sweep             TokenRefreshSweepConfig `mapstructure:"sweep"`
+}
+
+type TokenRefreshSweepConfig struct {
+	DefaultPageSize int `mapstructure:"default_page_size"`
 }
 
 // ServerConfig contains configuration for both HTTP servers.

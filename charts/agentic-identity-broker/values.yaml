@@ -644,6 +644,19 @@ broker:
         # -- CEL evaluation timeout (e.g. "100ms", "5s")
         evaluationTimeout: "100ms"
 
+  # Proactive third-party token refresh
+  tokenRefresh:
+    # -- Refresh third-party access tokens this long before expiry (Go duration).
+    # Set this below the access-token lifetime issued by each provider.
+    lookaheadDuration: "5m"
+    # -- Maximum concurrent background refreshes per replica (1-20).
+    # Each refresh holds a database connection; the 20-worker cap reserves 5 of 25
+    # pooled connections for other requests. Excess submissions are dropped.
+    backgroundWorkers: 10
+    sweep:
+      # -- Default page size for the external POST /api/sessions/sweep (1-1000).
+      defaultPageSize: 100
+
   # Security configuration
   security:
     # -- Skip HTTPS validation for third-party services (dev/test only!)

@@ -64,6 +64,9 @@ func Validate(cfg *ports.Config) error {
 	if err := validateTokenExchangeConfig(&cfg.TokenExchange, &cfg.Security); err != nil {
 		return err
 	}
+	if err := validateTokenRefreshConfig(&cfg.TokenRefresh); err != nil {
+		return err
+	}
 
 	// Validate encryption configuration
 	if err := validateEncryptionConfig(&cfg.Encryption); err != nil {
@@ -678,6 +681,19 @@ func validateTokenExchangeConfig(cfg *ports.TokenExchangeConfig, security *ports
 	}
 	if clientAssertion.JWKSMaxRefresh < 0 {
 		return formatValidationError("token_exchange.client_assertion.jwks_max_refresh", clientAssertion.JWKSMaxRefresh.String(), "non-negative duration", nil)
+	}
+	return nil
+}
+
+func validateTokenRefreshConfig(cfg *ports.TokenRefreshConfig) error {
+	if cfg.LookaheadDuration <= 0 {
+		return formatValidationError("token_refresh.lookahead_duration", cfg.LookaheadDuration.String(), "greater than 0", nil)
+	}
+	if cfg.BackgroundWorkers < 1 || cfg.BackgroundWorkers > 20 {
+		return formatValidationError("token_refresh.background_workers", strconv.Itoa(cfg.BackgroundWorkers), "between 1 and 20; each in-flight refresh holds a database connection; at most 20 of the 25 pooled connections may be used by background refresh", nil)
+	}
+	if cfg.Sweep.DefaultPageSize < 1 || cfg.Sweep.DefaultPageSize > 1000 {
+		return formatValidationError("token_refresh.sweep.default_page_size", strconv.Itoa(cfg.Sweep.DefaultPageSize), "between 1 and 1000", nil)
 	}
 	return nil
 }

@@ -37,6 +37,8 @@ the broker's default `http://localhost:14000`. Admin `/api` requests must match
 this URL's Host authority; ingress and other reverse proxies must preserve it.
 Forwarded Host headers are not trusted. `/health` probes remain unrestricted.
 
+The admin port must only be reachable through an authenticated proxy. Restrict access at deployment level and route sweep CronJobs through that proxy.
+
 `broker.server.enduser.authentication.jwt` and `broker.server.admin.authentication.jwt`
 are optional, independent JWT pre-authentication blocks (default: unset). Each supports
 `header_name`, `verification` (`jwks` or `none`), `jwks_uri`, audience/issuer constraints,
@@ -174,6 +176,9 @@ and unknown environments reject that development-only bypass.
 | `broker.tokenExchange.clientAssertion.jwksUri` | Explicit client-assertion JWKS endpoint; empty discovers it from the issuer. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksMinRefresh` | Minimum client-assertion JWKS refresh interval (Go duration); empty defaults to `15m`. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksMaxRefresh` | Maximum client-assertion JWKS refresh interval (Go duration); empty defaults to `max(jwksMinRefresh, 1h)`. | `""` |
+| `broker.tokenRefresh.lookaheadDuration` | String (Go duration): refresh before expiry; set below each provider access-token lifetime. | `"5m"` |
+| `broker.tokenRefresh.backgroundWorkers` | Integer (1–20): concurrent refreshes per replica. The 20-worker cap reserves 5 of 25 pooled database connections. | `10` |
+| `broker.tokenRefresh.sweep.defaultPageSize` | Integer (1–1000): default sessions per page for the externally triggered admin sweep. | `100` |
 | `broker.telemetry.serviceName` | Service name reported in every telemetry signal | `agentic-identity-broker` |
 | `broker.telemetry.resourceAttributes` | Additional OTel resource attributes (map) | `{}` |
 | `broker.telemetry.traces.enabled` | Enable trace export via OTLP | `true` |

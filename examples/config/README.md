@@ -126,6 +126,7 @@ Third-party OAuth2 session management configuration. Demonstrates:
 - Security-focused comments explaining each setting
 - Environment variable substitution for sensitive keys
 - A stable public HTTPS `server.enduser.public_url` for CIMD confidential services
+- Proactive token refresh with a 5m lookahead, 10 background workers, and 100 sessions per sweep page
 
 
 This configuration is required when enabling OAuth2 session management with third-party
