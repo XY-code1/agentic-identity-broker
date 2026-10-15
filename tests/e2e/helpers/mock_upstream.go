@@ -73,8 +73,10 @@ type MockUpstreamOAuth2Server struct {
 	tokenResponseGate       chan struct{}
 	accessToken             string
 	refreshToken            string
+	omitRefreshToken        bool
 	tokenType               string
 	expiresIn               int
+	stringExpiresIn         bool
 	strictPublicClientMode  bool
 	transientFailureStatus  int
 	transientFailuresLeft   int
@@ -177,6 +179,14 @@ func (m *MockUpstreamOAuth2Server) WithRefreshToken(token string) *MockUpstreamO
 	defer m.requestMutex.Unlock()
 
 	m.refreshToken = token
+	m.omitRefreshToken = false
+	return m
+}
+
+func (m *MockUpstreamOAuth2Server) WithOmittedRefreshToken() *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+	m.omitRefreshToken = true
 	return m
 }
 
@@ -237,6 +247,15 @@ func (m *MockUpstreamOAuth2Server) WithExpiresIn(seconds int) *MockUpstreamOAuth
 	defer m.requestMutex.Unlock()
 
 	m.expiresIn = seconds
+	m.stringExpiresIn = false
+	return m
+}
+
+func (m *MockUpstreamOAuth2Server) WithStringExpiresIn(seconds int) *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+	m.expiresIn = seconds
+	m.stringExpiresIn = true
 	return m
 }
 
@@ -482,6 +501,8 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 	tokenType := m.tokenType
 	expiresIn := m.expiresIn
 	refreshToken := m.refreshToken
+	omitRefreshToken := m.omitRefreshToken
+	stringExpiresIn := m.stringExpiresIn
 	m.requestMutex.RUnlock()
 
 	if blockTokenUntilCanceled {
@@ -518,10 +539,15 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusOK)
 
 	tokenResp := map[string]interface{}{
-		"access_token":  accessToken,
-		"token_type":    tokenType,
-		"expires_in":    expiresIn,
-		"refresh_token": refreshToken,
+		"access_token": accessToken,
+		"token_type":   tokenType,
+		"expires_in":   expiresIn,
+	}
+	if !omitRefreshToken {
+		tokenResp["refresh_token"] = refreshToken
+	}
+	if stringExpiresIn {
+		tokenResp["expires_in"] = fmt.Sprint(expiresIn)
 	}
 
 	_ = json.NewEncoder(w).Encode(tokenResp)

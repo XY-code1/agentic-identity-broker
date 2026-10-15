@@ -20,9 +20,10 @@ type SessionExpiryCursor struct {
 // This is an aggregate root - it owns the encrypted tokens and manages session lifecycle.
 // One session per (principal, service_id) pair, enforced by database unique constraint.
 type UserSession struct {
-	ID        id.SessionID `json:"id" db:"id"`
-	Principal id.Principal `json:"principal" db:"principal"`
-	ServiceID id.ServiceID `json:"service_id" db:"service_id"`
+	ID         id.SessionID `json:"id" db:"id"`
+	Principal  id.Principal `json:"principal" db:"principal"`
+	ServiceID  id.ServiceID `json:"service_id" db:"service_id"`
+	CallbackID string       `json:"-" db:"callback_id"`
 
 	// EncryptedAccessToken contains the OAuth2 access token ENCRYPTED by OAuth2SessionService
 	// using envelope encryption with service_id as Additional Authenticated Data (AAD).

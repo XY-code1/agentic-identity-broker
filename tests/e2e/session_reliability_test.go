@@ -95,7 +95,7 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		return resp, body
 	}
 
-	completeConnect := func() *url.URL {
+	startConnect := func() *url.URL {
 		resp, err := enduserServer.AuthenticatedGET(
 			"/api/third-party/"+githubID.String()+"/oauth2/authorize?redirect_uri="+url.QueryEscape("http://localhost:8000/sessions"),
 			principal,
@@ -112,7 +112,10 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		callbackURL, err := url.Parse(upstreamResp.Header.Get("Location"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(upstreamResp.Body.Close()).To(Succeed())
+		return callbackURL
+	}
 
+	finishConnect := func(callbackURL *url.URL) *url.URL {
 		callbackResp, err := enduserServer.AuthenticatedGET(callbackURL.RequestURI(), principal)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(callbackResp.StatusCode).To(Equal(http.StatusFound))
@@ -120,6 +123,10 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(callbackResp.Body.Close()).To(Succeed())
 		return location
+	}
+
+	completeConnect := func() *url.URL {
+		return finishConnect(startConnect())
 	}
 
 	// US5-S6 from specs/013-token-exchange/spec.md
@@ -145,7 +152,7 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		before.RefreshTokenExpiresAt = &refreshExpiry
 		Expect(testStorage.UserSessions().Create(ctx, before)).To(Succeed())
 
-		mockUpstream.WithAccessToken("account-b-access").WithRefreshToken("")
+		mockUpstream.WithAccessToken("account-b-access").WithOmittedRefreshToken()
 		Expect(completeConnect().Query().Get("success")).To(Equal("true"))
 		session, err := testStorage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), githubID)
 		Expect(err).NotTo(HaveOccurred())
@@ -176,5 +183,64 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		form, err := url.ParseQuery(mockUpstream.GetLastBody())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(form.Get("refresh_token")).To(Equal("account-b-refresh"))
+	})
+
+	// US2-S11 from specs/008-thirdparty-oauth2-sessions/spec.md
+	It("[US2-S11] keeps the first completed callback and accepts a later deliberate reconnect", func() {
+		first, second := startConnect(), startConnect()
+		mockUpstream.WithAccessToken("initial-winner")
+		Expect(finishConnect(second).Query().Get("success")).To(Equal("true"))
+		mockUpstream.WithAccessToken("initial-loser")
+		Expect(finishConnect(first).Query().Get("success")).To(Equal("true"))
+		resp, body := exchange()
+		Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
+		Expect(body["access_token"]).To(Equal("initial-winner"))
+
+		first, second = startConnect(), startConnect()
+		mockUpstream.WithAccessToken("reconnect-winner")
+		Expect(finishConnect(first).Query().Get("success")).To(Equal("true"))
+		mockUpstream.WithAccessToken("reconnect-loser")
+		Expect(finishConnect(second).Query().Get("success")).To(Equal("true"))
+		resp, body = exchange()
+		Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
+		Expect(body["access_token"]).To(Equal("reconnect-winner"))
+		mockUpstream.WithAccessToken("deliberate-reconnect")
+		Expect(completeConnect().Query().Get("success")).To(Equal("true"))
+		resp, body = exchange()
+		Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
+		Expect(body["access_token"]).To(Equal("deliberate-reconnect"))
+
+		pending := startConnect()
+		deleted, err := enduserServer.DirectRequest(http.MethodDelete, "/api/third-party/"+githubID.String()+"/session", principal, nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(deleted.StatusCode).To(Equal(http.StatusOK))
+		Expect(deleted.Body.Close()).To(Succeed())
+		Expect(finishConnect(pending).Query().Get("success")).NotTo(Equal("true"))
+		resp, body = exchange()
+		Expect(resp).To(matchers.HaveStatusCode(http.StatusBadRequest))
+		Expect(body["error"]).To(Equal("invalid_grant"))
+	})
+
+	// US1-S8 from specs/013-token-exchange/spec.md
+	It("[US1-S8] refreshes and persists a provider lifetime encoded as a JSON string", func() {
+		ctx := context.Background()
+		Expect(testStorage.UserSessions().Create(ctx, fixtures.ExpiredGitHubSessionForPrincipal(principal))).To(Succeed())
+		mockUpstream.WithAccessToken("string-expiry-access").WithStringExpiresIn(3600)
+		before := time.Now()
+		resp, body := exchange()
+		Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
+		Expect(body["access_token"]).To(Equal("string-expiry-access"))
+		Expect(body["expires_in"]).To(BeNumerically("~", 3600, 2))
+		session, err := testStorage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), githubID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(session.AccessTokenExpiresAt).NotTo(BeNil())
+		Expect(*session.AccessTokenExpiresAt).To(BeTemporally(">=", before.Add(time.Hour)))
+		Expect(*session.AccessTokenExpiresAt).To(BeTemporally("<=", time.Now().Add(time.Hour)))
+		requests := mockUpstream.GetTokenRequests()
+		Expect(requests).To(HaveLen(1))
+		form, err := url.ParseQuery(requests[0].Body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(form.Get("grant_type")).To(Equal("refresh_token"))
+		Expect(form.Get("refresh_token")).To(Equal("github-refresh-xyz"))
 	})
 })

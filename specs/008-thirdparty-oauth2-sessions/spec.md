@@ -9,7 +9,7 @@
 
 ### Session 2025-12-22
 
-- Q: What happens when user initiates multiple OAuth2 flows for the same service simultaneously (race condition)? → A: Use database unique constraint (principal, service_id); first successful callback wins, subsequent callbacks see existing session and skip token storage
+- Q: What happens when user initiates multiple OAuth2 flows for the same service simultaneously (race condition)? → A: Flows capture the current session ID and callback generation in sealed state. The first successful callback from that baseline wins; competing callbacks return success without replacing its credentials. A reconnect begun after that success captures the new generation and may replace credentials.
 - Q: How does system handle third-party authorization endpoint returning an error instead of authorization code? → A: Parse OAuth2 error response (error, error_description); redirect to sessions page with user-friendly error message displayed; allow immediate retry
 - Q: How does system handle network failures during token exchange? → A: Retry token exchange up to 3 times with exponential backoff (1s, 2s, 4s); if all retries fail, display error message allowing user to retry OAuth2 flow
 - Q: When is a session expired? → A: When neither its access token nor a stored refresh token is usable. An access-only session expires with its access token. Unknown refresh-token expiry does not guarantee indefinite validity.
@@ -55,6 +55,7 @@ A user needs to authenticate with a third-party service by initiating an OAuth2 
 8. **Given** third-party returns OAuth2 error in callback (e.g., access_denied, invalid_scope), **When** system processes callback, **Then** system parses error and error_description parameters, redirects user to sessions page with user-friendly error message, and Login button remains available for retry
 9. **Given** token exchange request fails due to network error, **When** system attempts token exchange, **Then** system retries up to 3 times with exponential backoff (1s, 2s, 4s), and if all retries fail, displays error message allowing user to restart OAuth2 flow
 10. **Given** a session with a usable stored refresh token exists, **When** the user re-connects the same service and the provider's token response omits `refresh_token`, **Then** system accepts the reconnect, replaces the access token, and clears the stored refresh token and its recorded expiry. This prevents combining credentials from different upstream accounts. The new access token remains usable until its expiry, after which token exchange requires re-authentication rather than refreshing with the old account's token. A subsequent reconnect with a new refresh token restores automatic refresh.
+11. **Given** multiple flows begin for the same user and service before any completes, with or without an existing session, **When** their callbacks succeed, **Then** only the first callback to persist credentials replaces or creates the connection; competing callbacks return success without changing its tokens. A deliberate reconnect begun after that success may replace credentials. Refresh does not change callback precedence, and a reconnect cannot recreate a deleted session.
 
 ---
 
@@ -133,7 +134,7 @@ The consent page stores its selections and original return URL in current-tab `s
 
 ### Edge Cases
 
-- **Multiple simultaneous OAuth2 flows for same service**: Database unique constraint on (principal, service_id) ensures first successful callback wins. Subsequent callbacks detect existing session and skip token storage, preventing race conditions and token corruption.
+- **Multiple simultaneous OAuth2 flows for same service**: Initial flows use an atomic insert-if-absent on (principal, service_id). Reconnects replace credentials under the refresh lock only if the session ID and callback generation still match their sealed authorize-time baseline. Every successful credential replacement advances the callback generation; refresh leaves it unchanged. Competing callbacks preserve the current session and return success. A reconnect whose session was deleted fails without recreating it.
 - **Third-party authorization errors**: When third-party returns OAuth2 error (e.g., access_denied, invalid_scope, server_error), system parses error and error_description parameters from callback URL, redirects user to sessions page with user-friendly error message, and allows immediate retry via Login button.
 - **Network failures during token exchange**: System retries token exchange request up to 3 times with exponential backoff (1s, 2s, 4s delays). If all retries fail, displays error message to user allowing them to retry the entire OAuth2 flow from the beginning.
 - **Session usability**: A session remains active while its access token is valid or a stored refresh token is usable. An expired access token can refresh transparently. An access-only reconnect becomes expired after its access token expires. Unknown refresh-token expiry permits refresh attempts but must not display as non-expiring.
@@ -230,8 +231,8 @@ third_party_oauth2:
 ### Database Requirements
 
 - **DB-001**: Create migration `004_create_user_sessions.up.sql` and `004_create_user_sessions.down.sql` for user_sessions table
-- **DB-002**: user_sessions table schema MUST include: id (UUID primary key), principal (string, indexed), service_id (UUID, foreign key to thirdparty_oauth2_services), encrypted_access_token (bytea), encrypted_refresh_token (bytea, nullable), token_type (string), access_token_expires_at (timestamp, nullable), refresh_token_expires_at (timestamp, nullable), initiated_at (timestamp), scope (string array), encryption_context (jsonb)
-- **DB-003**: Add unique constraint on (principal, service_id) - one session per user per service. This constraint prevents race conditions when multiple OAuth2 flows are initiated simultaneously; first callback to complete successfully wins, subsequent callbacks will detect existing session via constraint violation.
+- **DB-002**: user_sessions table schema MUST include: id (UUID primary key), principal (string, indexed), service_id (UUID, foreign key to thirdparty_oauth2_services), encrypted_access_token (bytea), encrypted_refresh_token (bytea, nullable), token_type (string), access_token_expires_at (timestamp, nullable), refresh_token_expires_at (timestamp, nullable), initiated_at (timestamp), scope (string array), encryption_context (jsonb), callback_id (text, private callback generation; empty for pre-existing sessions)
+- **DB-003**: The unique constraint on (principal, service_id) enforces one session per user and service. Initial callbacks MUST insert without overwriting an existing row. Reconnects MUST compare and advance callback_id atomically under the refresh lock. The unique constraint alone does not establish callback precedence.
 - **DB-004**: Add index on principal for fast session lookups by user
 - **DB-005**: Add foreign key constraint from service_id to third_party_services.id with ON DELETE RESTRICT (prevent deleting services with active sessions). Admin interface must catch constraint violation and display error message with active session count, requiring admin to terminate all user sessions before service deletion.
 - **DB-006**: Migration MUST be tested for both up and down operations without data loss

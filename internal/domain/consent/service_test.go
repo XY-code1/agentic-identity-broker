@@ -364,6 +364,7 @@ func (m *mockPermissionSetService) Close() {
 }
 
 type mockUserSessionRepo struct {
+	ports.UserSessionRepository
 	sessions map[id.SessionID]*storage.UserSession
 	err      error
 }
@@ -690,6 +691,7 @@ func (m *mockGrantRepo) CountGrantsReferencingPermissionSet(_ context.Context, p
 }
 
 type mockSessionRepo struct {
+	ports.UserSessionRepository
 	findFunc  func(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error)
 	activeIDs []id.ServiceID
 	listErr   error

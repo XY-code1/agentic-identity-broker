@@ -901,8 +901,13 @@ paths:
 
         - Exchanges authorization code for access/refresh tokens (with PKCE)
         - Encrypts tokens using EncryptionPort
-        - Stores session in database
-        - Reconnects replace the existing access token. If the response omits refresh_token,
+        - Stores a new session only if no competing callback already created it
+        - Reconnects replace credentials only if the session still matches the private
+          callback generation sealed when authorization began. The first completed callback
+          from a shared starting state wins; competing callbacks return success without
+          replacing its credentials. A later deliberate reconnect captures the new generation.
+          Refresh does not invalidate a reconnect, and reconnect cannot recreate a deleted session.
+        - If an accepted reconnect response omits refresh_token,
           the broker clears the stored refresh token and its expiry to prevent mixing upstream accounts.
           The connection requires login again after the new access token expires.
         - Redirects to the original redirect_uri with success=true and service_id;

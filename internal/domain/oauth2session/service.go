@@ -33,6 +33,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 	"golang.org/x/sync/singleflight"
 
@@ -545,6 +546,11 @@ func (s *OAuth2SessionService) initiateOAuth2Flow(
 		return nil, failure
 	}
 
+	previous, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, serviceID)
+	if err != nil {
+		return nil, sessionOperationError(ctx, OperationSessionLookup, DetailRepositoryUnavailable, err)
+	}
+
 	// Generate PKCE
 	verifier := oauth2.GenerateVerifier()
 
@@ -558,6 +564,10 @@ func (s *OAuth2SessionService) initiateOAuth2Flow(
 		ConsentStateID: consentStateID,
 		IssuedAt:       now,
 		ExpiresAt:      now.Add(s.config.StateTokenTTL),
+	}
+	if previous != nil {
+		claims.SessionID = previous.ID
+		claims.SessionCallbackID = previous.CallbackID
 	}
 
 	// Encrypt state token
@@ -614,6 +624,7 @@ func (s *OAuth2SessionService) createSession(
 	serviceID id.ServiceID,
 	token *oauth2.Token,
 	scope []string,
+	claims *OAuth2StateTokenClaims,
 ) (*storage.UserSession, error) {
 	// Bind ciphertext to the service so tokens cannot be decrypted under another service's context.
 	encryptionContext := domainencryption.NewServiceBranchKeySubject(serviceID).EncryptionContext()
@@ -647,9 +658,10 @@ func (s *OAuth2SessionService) createSession(
 	}
 
 	session, err := s.refreshRepo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
-		if current == nil {
+		if current == nil || current.ID != claims.SessionID || current.CallbackID != claims.SessionCallbackID {
 			return false, nil
 		}
+		current.CallbackID = uuid.NewString()
 		current.EncryptedRefreshToken = encryptedRefresh
 		current.RefreshTokenExpiresAt = nil
 		current.EncryptedAccessToken = encryptedAccess
@@ -669,11 +681,15 @@ func (s *OAuth2SessionService) createSession(
 		s.logger.Info("session updated", "session_id", session.ID, "principal", principal, "service_id", serviceID)
 		return session, nil
 	}
+	if !claims.SessionID.IsZero() {
+		return nil, ErrSessionNotFound
+	}
 
 	session = &storage.UserSession{
 		ID:                    id.NewSessionID(),
 		Principal:             principal,
 		ServiceID:             serviceID,
+		CallbackID:            uuid.NewString(),
 		EncryptedAccessToken:  encryptedAccess,
 		EncryptedRefreshToken: encryptedRefresh,
 		TokenType:             tokenType,
@@ -685,11 +701,15 @@ func (s *OAuth2SessionService) createSession(
 		UpdatedAt:             now,
 	}
 
-	// A concurrent first connect may win the insert; Create upserts on (principal, service_id).
-	if err := s.sessionRepo.Create(ctx, session); err != nil {
+	// The unique key chooses the winner even when both callbacks observed no session.
+	session, err = s.sessionRepo.CreateIfAbsent(ctx, session)
+	if err != nil {
 		failure := sessionOperationError(ctx, OperationCodeExchange, DetailPersistenceFailed, err)
 		s.logger.ErrorContext(ctx, "failed to create session", "service_id", serviceID, "oauth2_session", failure.Metadata())
 		return nil, failure
+	}
+	if session == nil {
+		return nil, ErrSessionNotFound
 	}
 
 	s.logger.Info("session created", "session_id", session.ID, "principal", principal, "service_id", serviceID)
@@ -777,7 +797,7 @@ func (s *OAuth2SessionService) HandleCallback(
 	}
 
 	// Create and store session
-	session, err := s.createSession(ctx, principal, req.ServiceID, token, scopes)
+	session, err := s.createSession(ctx, principal, req.ServiceID, token, scopes, claims)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "failed to create session from token", "service_id", req.ServiceID, "oauth2_session", sessionFailureMetadata(err))
 		return nil, fmt.Errorf("failed to create session: %w", err)

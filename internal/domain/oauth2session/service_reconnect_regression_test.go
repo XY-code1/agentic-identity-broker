@@ -53,7 +53,7 @@ func TestReconnectWithoutRefreshTokenReplacesConcurrentRotationUnderLock(t *test
 		<-refreshStarted
 		reconnected := make(chan error, 1)
 		go func() {
-			_, err := service.createSession(ctx, stored.Principal, provider.ID, &oauth2.Token{AccessToken: "other-account-access", Expiry: time.Now().Add(time.Hour)}, []string{"other-scope"})
+			_, err := service.createSession(ctx, stored.Principal, provider.ID, &oauth2.Token{AccessToken: "other-account-access", Expiry: time.Now().Add(time.Hour)}, []string{"other-scope"}, &OAuth2StateTokenClaims{SessionID: stored.ID, SessionCallbackID: stored.CallbackID})
 			reconnected <- err
 		}()
 		<-reconnectWaiting
@@ -102,7 +102,7 @@ func TestReconnectLockedFailurePreservesCredentialsWithoutUpsert(t *testing.T) {
 				return nil
 			}}
 
-			session, err := service.createSession(context.Background(), stored.Principal, provider.ID, &oauth2.Token{AccessToken: "other-account-access", Expiry: time.Now().Add(time.Hour)}, []string{"other-scope"})
+			session, err := service.createSession(context.Background(), stored.Principal, provider.ID, &oauth2.Token{AccessToken: "other-account-access", Expiry: time.Now().Add(time.Hour)}, []string{"other-scope"}, &OAuth2StateTokenClaims{SessionID: stored.ID, SessionCallbackID: stored.CallbackID})
 
 			assert.Nil(t, session)
 			assert.Equal(t, before, *stored, "failed reconnect must preserve the stored session")

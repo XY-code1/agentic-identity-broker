@@ -38,6 +38,7 @@ type userSessionRecord struct {
 	ID                    id.SessionID              `db:"id"`
 	Principal             id.Principal              `db:"principal"`
 	ServiceID             id.ServiceID              `db:"service_id"`
+	CallbackID            string                    `db:"callback_id"`
 	EncryptedAccessToken  []byte                    `db:"encrypted_access_token"`
 	EncryptedRefreshToken []byte                    `db:"encrypted_refresh_token"`
 	TokenType             string                    `db:"token_type"`
@@ -66,6 +67,7 @@ func recordToSession(r *userSessionRecord) *storage.UserSession {
 		ID:                    r.ID,
 		Principal:             r.Principal,
 		ServiceID:             r.ServiceID,
+		CallbackID:            r.CallbackID,
 		EncryptedAccessToken:  r.EncryptedAccessToken,
 		EncryptedRefreshToken: r.EncryptedRefreshToken,
 		TokenType:             r.TokenType,
@@ -97,26 +99,39 @@ func NewUserSessionRepository(adapter *Adapter) *PostgresUserSessionRepository {
 
 // Create creates a new user session with upsert semantics.
 func (r *PostgresUserSessionRepository) Create(ctx context.Context, session *storage.UserSession) error {
+	_, err := r.create(ctx, session, true)
+	return err
+}
+
+func (r *PostgresUserSessionRepository) CreateIfAbsent(ctx context.Context, session *storage.UserSession) (*storage.UserSession, error) {
+	return r.create(ctx, session, false)
+}
+
+func (r *PostgresUserSessionRepository) create(ctx context.Context, session *storage.UserSession, replace bool) (*storage.UserSession, error) {
 	if session == nil {
-		return errors.New("session cannot be nil")
+		return nil, errors.New("session cannot be nil")
 	}
 	if err := session.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 
 	if session.ID.IsZero() {
 		session.ID = id.NewSessionID()
 	}
 
-	query := `
+	const insertQuery = `
 		INSERT INTO user_sessions (
 			id, principal, service_id, encrypted_access_token, encrypted_refresh_token,
 			token_type, access_token_expires_at, refresh_token_expires_at, scope,
-			encryption_context, initiated_at, created_at, updated_at
+			encryption_context, initiated_at, created_at, updated_at, callback_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 		)
-		ON CONFLICT (principal, service_id) DO UPDATE SET
+		ON CONFLICT (principal, service_id)
+	`
+	query := insertQuery + `DO NOTHING`
+	if replace {
+		query = insertQuery + `DO UPDATE SET
 			encrypted_access_token = EXCLUDED.encrypted_access_token,
 			encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
 			token_type = EXCLUDED.token_type,
@@ -124,23 +139,35 @@ func (r *PostgresUserSessionRepository) Create(ctx context.Context, session *sto
 			refresh_token_expires_at = EXCLUDED.refresh_token_expires_at,
 			scope = EXCLUDED.scope,
 			encryption_context = EXCLUDED.encryption_context,
+			callback_id = EXCLUDED.callback_id,
 			updated_at = NOW()
 	`
+	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
-	_, err := r.adapter.db.ExecContext(execCtx, query,
+	result, err := r.adapter.db.ExecContext(execCtx, query,
 		session.ID, session.Principal, session.ServiceID,
 		session.EncryptedAccessToken, session.EncryptedRefreshToken,
 		session.TokenType, session.AccessTokenExpiresAt, session.RefreshTokenExpiresAt,
 		pq.Array(session.Scope), session.EncryptionContext,
 		session.InitiatedAt, session.CreatedAt, session.UpdatedAt,
+		session.CallbackID,
 	)
 
 	if err != nil {
-		return r.wrapError(err, "Create")
+		return nil, r.wrapError(err, "Create")
 	}
-	return nil
+	if !replace {
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return nil, r.wrapError(err, "CreateIfAbsent")
+		}
+		if rows == 0 {
+			return r.FindByPrincipalAndService(ctx, session.Principal, session.ServiceID)
+		}
+	}
+	return session, nil
 }
 
 // Get retrieves a session by ID.
@@ -239,10 +266,10 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 		writeCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 		_, err = tx.ExecContext(writeCtx, `UPDATE user_sessions SET encrypted_access_token = $1, encrypted_refresh_token = $2,
 			access_token_expires_at = $3, refresh_token_expires_at = $4, token_type = $5, scope = $6,
-			encryption_context = $7, updated_at = $8 WHERE id = $9`,
+			encryption_context = $7, updated_at = $8, callback_id = $9 WHERE id = $10`,
 			session.EncryptedAccessToken, session.EncryptedRefreshToken, session.AccessTokenExpiresAt,
 			session.RefreshTokenExpiresAt, session.TokenType, pq.Array(session.Scope), session.EncryptionContext,
-			session.UpdatedAt, session.ID)
+			session.UpdatedAt, session.CallbackID, session.ID)
 		cancel()
 		if err != nil {
 			return nil, r.wrapError(err, "WithLockedSession")

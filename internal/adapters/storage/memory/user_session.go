@@ -37,17 +37,26 @@ func NewInMemoryUserSessionRepository() *InMemoryUserSessionRepository {
 
 // Create creates a new user session with upsert semantics.
 func (r *InMemoryUserSessionRepository) Create(ctx context.Context, session *storage.UserSession) error {
+	_, err := r.create(ctx, session, true)
+	return err
+}
+
+func (r *InMemoryUserSessionRepository) CreateIfAbsent(ctx context.Context, session *storage.UserSession) (*storage.UserSession, error) {
+	return r.create(ctx, session, false)
+}
+
+func (r *InMemoryUserSessionRepository) create(ctx context.Context, session *storage.UserSession, replace bool) (*storage.UserSession, error) {
 	if session == nil {
-		return errors.New("session cannot be nil")
+		return nil, errors.New("session cannot be nil")
 	}
 	if err := session.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 
 	key := principalServiceKey(session.Principal, session.ServiceID)
 	gate, err := r.lockSession(ctx, key)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer r.unlockSession(key, gate)
 
@@ -55,6 +64,9 @@ func (r *InMemoryUserSessionRepository) Create(ctx context.Context, session *sto
 	defer r.mu.Unlock()
 	// If session exists for this principal+service, update it
 	if existing, ok := r.index[key]; ok {
+		if !replace {
+			return existing, nil
+		}
 		// Reuse ID
 		session.ID = existing.ID
 		delete(r.sessions, existing.ID)
@@ -62,7 +74,7 @@ func (r *InMemoryUserSessionRepository) Create(ctx context.Context, session *sto
 
 	r.sessions[session.ID] = session
 	r.index[key] = session
-	return nil
+	return session, nil
 }
 
 // Get retrieves a session by ID.
