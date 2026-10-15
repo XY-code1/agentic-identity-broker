@@ -310,6 +310,13 @@ ingress:
 4. Broker Deployment uses the main image and a different user with appropriate runtime permissions
 5. Migration Job completes before broker pods start
 
+### Session schema compatibility
+
+Before a later release adds columns to `user_sessions`, deploy a release with explicit session-query columns to every broker pod. Older binaries with wildcard scans reject unknown columns, even when the new values are NULL. A query fix in the later release cannot protect pods that still run an older binary during its migration hook.
+
+Use a release with explicit session-query columns as the rollback target when retaining an expanded session schema. This preparation changes no schema and adds no filesystem credential support. Before rolling back the filesystem-credential feature, convert its services to stored credentials as its deployment guide requires.
+
+
 ### Security: Separate Migration Image
 
 For security hardening, the migration Job uses a dedicated Docker image:
