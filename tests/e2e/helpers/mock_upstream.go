@@ -75,8 +75,7 @@ type MockUpstreamOAuth2Server struct {
 	refreshToken            string
 	omitRefreshToken        bool
 	tokenType               string
-	expiresIn               int
-	stringExpiresIn         bool
+	expiresIn               any
 	strictPublicClientMode  bool
 	transientFailureStatus  int
 	transientFailuresLeft   int
@@ -247,15 +246,13 @@ func (m *MockUpstreamOAuth2Server) WithExpiresIn(seconds int) *MockUpstreamOAuth
 	defer m.requestMutex.Unlock()
 
 	m.expiresIn = seconds
-	m.stringExpiresIn = false
 	return m
 }
 
 func (m *MockUpstreamOAuth2Server) WithStringExpiresIn(seconds int) *MockUpstreamOAuth2Server {
 	m.requestMutex.Lock()
 	defer m.requestMutex.Unlock()
-	m.expiresIn = seconds
-	m.stringExpiresIn = true
+	m.expiresIn = fmt.Sprint(seconds)
 	return m
 }
 
@@ -502,7 +499,6 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 	expiresIn := m.expiresIn
 	refreshToken := m.refreshToken
 	omitRefreshToken := m.omitRefreshToken
-	stringExpiresIn := m.stringExpiresIn
 	m.requestMutex.RUnlock()
 
 	if blockTokenUntilCanceled {
@@ -545,9 +541,6 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 	}
 	if !omitRefreshToken {
 		tokenResp["refresh_token"] = refreshToken
-	}
-	if stringExpiresIn {
-		tokenResp["expires_in"] = fmt.Sprint(expiresIn)
 	}
 
 	_ = json.NewEncoder(w).Encode(tokenResp)
