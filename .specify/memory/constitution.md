@@ -624,7 +624,7 @@ If Principle XIII (End-to-End Acceptance Testing & Spec Traceability) cannot be 
 1. Propose amendment via PR to [.specify/memory/constitution.md](.specify/memory/constitution.md)
 2. Include rationale, impacted templates, and migration plan
 3. Increment CONSTITUTION_VERSION per semantic versioning rules
-4. Update Sync Impact Report with changes
+4. Prepare or update a temporary Sync Impact Report describing the amendment for review; remove it before committing the amended constitution.
 5. Propagate changes to dependent templates and documentation
 
 ### Versioning Policy

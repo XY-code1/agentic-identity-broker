@@ -26,6 +26,12 @@ description: "Task list template for feature implementation"
 - **Mobile**: `api/src/`, `ios/src/` or `android/src/`
 - Paths shown below assume single project - adjust based on plan.md structure
 
+## 🔒 Feature Scope [MANDATORY]
+
+- Every generated task MUST cite an approved feature requirement or acceptance scenario (ID if available, otherwise title), or a binding constraint applicable to the affected feature path. Include work necessary to make that path functional, secure, and compliant; do not add independent remediation or optional improvements.
+- If a finding blocks safe or compliant delivery, include only the minimum necessary correction. For unrelated findings, ask the user before filing an issue; record only user-approved issue URLs in a non-checkbox `Future Work` note in the feature planning or implementation record, never as feature tasks.
+- Expanding feature scope requires explicit user approval and corresponding updates to `spec.md` and `tasks.md` before implementation.
+
 <!--
   ============================================================================
   IMPORTANT: The tasks below are SAMPLE TASKS for illustration purposes only.
@@ -147,16 +153,13 @@ Examples of foundational tasks (adjust based on your project):
 
 ---
 
-## Phase N: Polish & Cross-Cutting Concerns
+## Phase N: Constitution Compliance Verification
 
-**Purpose**: Improvements that affect multiple user stories
+**Purpose**: Verify approved feature scope and feature-required finishing work
 
-- [ ] TXXX [P] Documentation updates in docs/
-- [ ] TXXX Code cleanup and refactoring
-- [ ] TXXX Performance optimization across all stories
-- [ ] TXXX [P] Additional unit tests (if requested) in tests/unit/
-- [ ] TXXX Security hardening
-- [ ] TXXX Run quickstart.md validation
+- [ ] TXXX Verify every task traces to an approved feature requirement, acceptance scenario, or applicable binding constraint (Feature Scope & Deferred Findings)
+- [ ] TXXX Verify unrelated remediation is excluded and user-approved issue URLs appear only under Future Work, not as feature tasks (Feature Scope & Deferred Findings)
+- [ ] TXXX Verify feature-required documentation and quickstart.md validation (if applicable)
 
 ---
 
@@ -169,7 +172,7 @@ Examples of foundational tasks (adjust based on your project):
 - **User Stories (Phase 3+)**: All depend on Foundational phase completion
   - User stories can then proceed in parallel (if staffed)
   - Or sequentially in priority order (P1 → P2 → P3)
-- **Polish (Final Phase)**: Depends on all desired user stories being complete
+- **Constitution Compliance Verification (Final Phase)**: Depends on all desired user stories being complete
 
 ### User Story Dependencies
 
