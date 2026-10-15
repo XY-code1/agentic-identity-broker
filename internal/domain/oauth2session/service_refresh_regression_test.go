@@ -41,6 +41,26 @@ func TestRefreshErrorBodyTimeoutIsNotRetried(t *testing.T) {
 	}
 }
 
+func TestRefreshIncompleteErrorResponseIsNotRetried(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				service, provider, _ := newOperationTestService(t, io.Discard)
+				attempts := 0
+				service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
+					attempts++
+					return &http.Response{StatusCode: status, Body: io.NopCloser(operationFailingReader{cause: io.ErrUnexpectedEOF})}, nil
+				})
+				_, err := service.RefreshAccessToken(context.Background(), provider, "refresh")
+				metadata := requireOperationError(t, err, OperationRefresh, DetailProviderUnavailable)
+				assert.Equal(t, status, metadata.StatusCode())
+				assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+				assert.Equal(t, 1, attempts)
+			})
+		})
+	}
+}
+
 func TestRefreshRetryScheduling(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -50,6 +70,10 @@ func TestRefreshRetryScheduling(t *testing.T) {
 	}{
 		{name: "exponential backoff", want: []time.Duration{0, time.Second, 3 * time.Second}},
 		{name: "positive Retry-After", retryAfter: "2", want: []time.Duration{0, 2 * time.Second, 4 * time.Second}},
+		{name: "Retry-After cutoff is inclusive", retryAfter: "10", want: []time.Duration{0, 10 * time.Second, 20 * time.Second}},
+		{name: "Retry-After above cutoff", retryAfter: "11", want: []time.Duration{0}},
+		{name: "Retry-After duration overflow", retryAfter: "9223372037", want: []time.Duration{0}},
+		{name: "Retry-After integer overflow", retryAfter: "9223372036854775808", want: []time.Duration{0}},
 		{name: "insufficient backoff budget", budget: 500 * time.Millisecond, want: []time.Duration{0}},
 		{name: "insufficient Retry-After budget", retryAfter: "2", budget: 1500 * time.Millisecond, want: []time.Duration{0}},
 	} {

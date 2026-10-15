@@ -971,11 +971,8 @@ func (s *OAuth2SessionService) refreshOnce(
 			retryable:  resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 && resp.StatusCode <= 599,
 			retryAfter: retryAfter(resp.Header.Get("Retry-After"), time.Now()),
 		}
-		failure := thirdpartyRefreshError(resp)
-		var timeoutErr net.Error
-		if errors.As(failure, &timeoutErr) && timeoutErr.Timeout() {
-			outcome.retryable = false
-		}
+		failure, complete := thirdpartyRefreshError(resp)
+		outcome.retryable = outcome.retryable && complete
 		return nil, outcome, failure
 	}
 
@@ -1021,7 +1018,7 @@ const maxThirdpartyErrorBodyBytes = 64 << 10
 
 // thirdpartyRefreshError keeps only the HTTP status and an allowlisted OAuth error code so that
 // provider-controlled descriptions, URIs, headers, and bodies never leave this function.
-func thirdpartyRefreshError(resp *http.Response) error {
+func thirdpartyRefreshError(resp *http.Response) (error, bool) {
 	retrieveErr := &oauth2.RetrieveError{
 		Response: &http.Response{
 			StatusCode: resp.StatusCode,
@@ -1053,7 +1050,7 @@ func thirdpartyRefreshError(resp *http.Response) error {
 		detail = DetailProviderClientRejected
 	}
 	metadata := NewErrorMetadata(OperationRefresh, detail).WithProviderResponse(resp.StatusCode, oauthCode)
-	return NewOperationError(metadata, errors.Join(&RefreshRejectedError{StatusCode: resp.StatusCode, OAuthError: retrieveErr.ErrorCode}, retrieveErr, err))
+	return NewOperationError(metadata, errors.Join(&RefreshRejectedError{StatusCode: resp.StatusCode, OAuthError: retrieveErr.ErrorCode}, retrieveErr, err)), err == nil
 }
 
 func (s *OAuth2SessionService) setSessionTokens(ctx context.Context, session *storage.UserSession, newToken *oauth2.Token, flavor model.OAuth2Flavor) error {
