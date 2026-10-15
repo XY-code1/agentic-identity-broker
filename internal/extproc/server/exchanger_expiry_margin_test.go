@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -25,6 +26,7 @@ func TestTokenExchanger_Cache_StopsServingBeforeProviderExpiry(t *testing.T) {
 	}{
 		{"minimum margin", 60, 49 * time.Second, 51 * time.Second},
 		{"percentage margin", 200, 179 * time.Second, 181 * time.Second},
+		{"one-second lifetime", 1, 250 * time.Millisecond, 750 * time.Millisecond},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mocks := newMockServers()
@@ -94,4 +96,48 @@ func TestTokenExchanger_Cache_ShortLivedTokenKeepsHalfItsLifetime(t *testing.T) 
 		require.NoError(t, err)
 		assert.Greater(t, mocks.exchangeCalls, calls, "token past half its lifetime must be re-exchanged")
 	})
+}
+
+func TestTokenExchanger_Cache_DistinguishesUnknownAndExhaustedExpiry(t *testing.T) {
+	negative := -1
+	for _, tc := range []struct {
+		name       string
+		expiry     *int
+		wantCached bool
+	}{
+		{name: "unknown", wantCached: true},
+		{name: "zero", expiry: new(int)},
+		{name: "negative", expiry: &negative},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mocks := newMockServers()
+			defer mocks.Close()
+			synctest.Test(t, func(t *testing.T) {
+				exchanger, err := server.NewTokenExchanger(configForMocks(mocks), testLogger())
+				require.NoError(t, err)
+				defer exchanger.Shutdown()
+				if !tc.wantCached {
+					previousExpiry := 1
+					mocks.exchangeExpiry = &previousExpiry
+					_, err = exchanger.Exchange(context.Background(), "subject", "https://resource.example")
+					require.NoError(t, err)
+					time.Sleep(750 * time.Millisecond)
+				}
+				mocks.exchangeExpiry = tc.expiry
+				_, err = exchanger.Exchange(context.Background(), "subject", "https://resource.example")
+				require.NoError(t, err)
+				mocks.exchangedToken = "next-token"
+				second, err := exchanger.Exchange(context.Background(), "subject", "https://resource.example")
+				require.NoError(t, err)
+				if tc.wantCached {
+					assert.Equal(t, "exchanged-access-token", second.Token)
+				} else {
+					assert.Equal(t, "next-token", second.Token)
+					mocks.exchangeStatus = http.StatusServiceUnavailable
+					_, err = exchanger.Exchange(context.Background(), "subject", "https://resource.example")
+					require.Error(t, err, "an exhausted replacement must remove the previous token from outage fallback")
+				}
+			})
+		})
+	}
 }

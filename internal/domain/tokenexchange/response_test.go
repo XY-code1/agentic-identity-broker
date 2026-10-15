@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,49 +32,6 @@ func TestTokenExchangeResponse_ValidMinimal(t *testing.T) {
 	}
 	if resp.IssuedTokenType != AccessTokenType {
 		t.Errorf("IssuedTokenType = %q, want %q", resp.IssuedTokenType, AccessTokenType)
-	}
-}
-
-// TestTokenExchangeResponse_ValidWithExpiry tests response with expiration time.
-func TestTokenExchangeResponse_ValidWithExpiry(t *testing.T) {
-	t.Parallel()
-	resp := NewTokenExchangeResponseWithExpiry(
-		"ya29.a0AfH6SMBx...",
-		BearerTokenType,
-		AccessTokenType,
-		3600, // 1 hour
-	)
-
-	if err := resp.Validate(); err != nil {
-		t.Errorf("Validate() error = %v, want nil", err)
-	}
-
-	if resp.ExpiresIn != 3600 {
-		t.Errorf("ExpiresIn = %d, want 3600", resp.ExpiresIn)
-	}
-}
-
-// TestTokenExchangeResponse_ValidFull tests response with all optional fields.
-func TestTokenExchangeResponse_ValidFull(t *testing.T) {
-	t.Parallel()
-	resp := NewTokenExchangeResponseFull(
-		"ya29.a0AfH6SMBx...",
-		BearerTokenType,
-		AccessTokenType,
-		"1//0gvVy...", // refresh_token
-		"repo read write",
-		3600,
-	)
-
-	if err := resp.Validate(); err != nil {
-		t.Errorf("Validate() error = %v, want nil", err)
-	}
-
-	if resp.RefreshToken != "1//0gvVy..." {
-		t.Errorf("RefreshToken = %q, want %q", resp.RefreshToken, "1//0gvVy...")
-	}
-	if resp.Scope != "repo read write" {
-		t.Errorf("Scope = %q, want %q", resp.Scope, "repo read write")
 	}
 }
 
@@ -138,7 +96,7 @@ func TestTokenExchangeResponse_InvalidNegativeExpiresIn(t *testing.T) {
 		AccessToken:     "ya29.a0AfH6SMBx...",
 		TokenType:       BearerTokenType,
 		IssuedTokenType: AccessTokenType,
-		ExpiresIn:       -1, // negative expiration
+		ExpiresIn:       ptr.To(int64(-1)),
 	}
 
 	err := resp.Validate()
@@ -159,7 +117,7 @@ func TestTokenExchangeResponse_ToJSON(t *testing.T) {
 		AccessTokenType,
 		"1//0gvVy...",
 		"repo read",
-		3600,
+		ptr.To(int64(3600)),
 	)
 
 	jsonBytes, err := resp.ToJSON()
@@ -235,7 +193,7 @@ func TestTokenExchangeResponse_String(t *testing.T) {
 		AccessTokenType,
 		"1//0gvVy...",
 		"repo read",
-		3600,
+		ptr.To(int64(3600)),
 	)
 
 	str := resp.String()
@@ -301,28 +259,6 @@ func TestTokenExchangeResponse_WithScope(t *testing.T) {
 	}
 }
 
-// TestTokenExchangeResponse_WithExpiresIn tests the builder method.
-func TestTokenExchangeResponse_WithExpiresIn(t *testing.T) {
-	t.Parallel()
-	resp := NewTokenExchangeResponse(
-		"ya29.a0AfH6SMBx...",
-		BearerTokenType,
-		AccessTokenType,
-	)
-
-	newResp := resp.WithExpiresIn(3600)
-
-	// Original should be unchanged
-	if resp.ExpiresIn != 0 {
-		t.Errorf("original response ExpiresIn changed: %d", resp.ExpiresIn)
-	}
-
-	// New response should have expiration
-	if newResp.ExpiresIn != 3600 {
-		t.Errorf("new response ExpiresIn = %d, want 3600", newResp.ExpiresIn)
-	}
-}
-
 // TestTokenExchangeResponse_HasRefreshToken tests the query method.
 func TestTokenExchangeResponse_HasRefreshToken(t *testing.T) {
 	t.Parallel()
@@ -341,7 +277,7 @@ func TestTokenExchangeResponse_HasRefreshToken(t *testing.T) {
 		AccessTokenType,
 		"1//0gvVy...",
 		"",
-		0,
+		nil,
 	)
 	if !resp2.HasRefreshToken() {
 		t.Errorf("HasRefreshToken() = false, want true")
@@ -380,35 +316,13 @@ func TestTokenExchangeResponse_GetExpirationSeconds(t *testing.T) {
 				AccessToken:     "token",
 				TokenType:       BearerTokenType,
 				IssuedTokenType: AccessTokenType,
-				ExpiresIn:       tt.expiresIn,
+				ExpiresIn:       &tt.expiresIn,
 			}
 
 			if resp.GetExpirationSeconds() != tt.want {
 				t.Errorf("GetExpirationSeconds() = %d, want %d", resp.GetExpirationSeconds(), tt.want)
 			}
 		})
-	}
-}
-
-// TestTokenExchangeResponse_ChainedBuilders tests that builders can be chained.
-func TestTokenExchangeResponse_ChainedBuilders(t *testing.T) {
-	t.Parallel()
-	resp := NewTokenExchangeResponse(
-		"ya29.a0AfH6SMBx...",
-		BearerTokenType,
-		AccessTokenType,
-	).WithRefreshToken("1//0gvVy...").
-		WithScope("repo read").
-		WithExpiresIn(3600)
-
-	if resp.RefreshToken != "1//0gvVy..." {
-		t.Errorf("chained WithRefreshToken failed")
-	}
-	if resp.Scope != "repo read" {
-		t.Errorf("chained WithScope failed")
-	}
-	if resp.ExpiresIn != 3600 {
-		t.Errorf("chained WithExpiresIn failed")
 	}
 }
 
@@ -421,7 +335,7 @@ func TestTokenExchangeResponse_RFC8693Format(t *testing.T) {
 		AccessTokenType,
 		"1//0gvVy...",
 		"repo read",
-		3600,
+		ptr.To(int64(3600)),
 	)
 
 	jsonBytes, _ := resp.ToJSON()
@@ -455,9 +369,9 @@ func TestTokenExchangeResponse_IsExpired(t *testing.T) {
 		want      bool
 	}{
 		{
-			name:      "not expired (zero)",
+			name:      "exhausted (zero)",
 			expiresIn: 0,
-			want:      false,
+			want:      true,
 		},
 		{
 			name:      "not expired (positive)",
@@ -478,7 +392,7 @@ func TestTokenExchangeResponse_IsExpired(t *testing.T) {
 				AccessToken:     "token",
 				TokenType:       BearerTokenType,
 				IssuedTokenType: AccessTokenType,
-				ExpiresIn:       tt.expiresIn,
+				ExpiresIn:       &tt.expiresIn,
 			}
 
 			if resp.IsExpired() != tt.want {

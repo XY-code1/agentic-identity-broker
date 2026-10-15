@@ -280,6 +280,13 @@ func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceUR
 				return ExchangeResult{}, err
 			}
 
+			if window.lifetime <= 0 {
+				te.cacheMu.Lock()
+				delete(te.cache, key)
+				te.cacheMu.Unlock()
+				return result, nil
+			}
+
 			cachedPermSets := cloneGrantedPermissionSets(result.GrantedPermissionSets)
 			te.cacheMu.Lock()
 			now := time.Now()
@@ -480,18 +487,20 @@ type tokenLifetimes struct {
 	lifetime time.Duration
 }
 
-// computeTTL derives the cache window from expires_in, falling back to default_ttl, with both
-// values capped at max_ttl. A token with a broker-reported expiry stops being served
-// max(10s, 10% of expires_in) before it, but never sooner than half its lifetime or one second,
-// so requests started just before expiry do not reach the upstream with a dead token.
+// computeTTL uses default_ttl only for unknown expiry. Known lifetimes keep a fresh-cache
+// margin, capped at half their lifetime for short-lived tokens. The outage fallback is
+// separate and can serve past the reported expiry.
 func (te *TokenExchanger) computeTTL(expiresIn *int) tokenLifetimes {
-	if expiresIn == nil || *expiresIn <= 0 {
+	if expiresIn == nil {
 		ttl := min(te.cfg.Cache.DefaultTTL, te.cfg.Cache.MaxTTL)
 		return tokenLifetimes{fresh: ttl, lifetime: ttl}
 	}
+	if *expiresIn <= 0 {
+		return tokenLifetimes{}
+	}
 	lifetime := time.Duration(*expiresIn) * time.Second
 	fresh := lifetime - max(minExpiryMargin, lifetime/10)
-	fresh = max(fresh, lifetime/2, time.Second)
+	fresh = max(fresh, lifetime/2)
 	return tokenLifetimes{
 		fresh:    min(fresh, te.cfg.Cache.MaxTTL),
 		lifetime: min(lifetime, te.cfg.Cache.MaxTTL),

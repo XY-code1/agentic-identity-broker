@@ -2273,7 +2273,7 @@ func TestTokenExchangeSuccessObservationContext(t *testing.T) {
 			spans := captureTokenExchangeSpans(t)
 			logs := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
 			handler := &OAuth2TokenHandler{Logger: slog.New(logs)}
-			response := tokenexchange.NewTokenExchangeResponseFull("ACCESS_TOKEN_SENTINEL", "Bearer", tokenexchange.AccessTokenType, "REFRESH_TOKEN_SENTINEL", "SCOPE_SENTINEL", 3600)
+			response := tokenexchange.NewTokenExchangeResponseFull("ACCESS_TOKEN_SENTINEL", "Bearer", tokenexchange.AccessTokenType, "REFRESH_TOKEN_SENTINEL", "SCOPE_SENTINEL", ptr.To(int64(3600)))
 			response.Service = tokenexchange.ServiceRef{ID: serviceID}
 			response.Authorization = test.authorization
 			response.Principal, response.AgentID = "wire-owner@example.com", agentID.String()

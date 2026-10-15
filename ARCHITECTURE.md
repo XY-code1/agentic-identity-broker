@@ -999,7 +999,8 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 - `accessToken`: The exchanged token value
 - `expiresAt`: Absolute expiration timestamp
-- Computed from `expires_in` response field (capped at `cache.max_ttl`, defaulting to `cache.default_ttl`)
+- For positive `expires_in`, the fresh lifetime is `max(lifetime - max(10s, lifetime / 10), lifetime / 2)`, capped at `cache.max_ttl`. Only absent or null expiry uses `cache.default_ttl`. Known nonpositive lifetime is not cached, including for outage fallback. The broker serializes known subsecond lifetime as zero instead of omitting it.
+- Transient outages can serve a previously cached token until its reported lifetime plus five seconds, capped at `cache.max_ttl`. This can exceed reported expiry; the fresh-cache margin does not guarantee validity in transit.
 
 **TokenCacheKey**: Struct used as Go map key: `{subjectToken, resourceURI}`. Using struct keys prevents separator-injection attacks compared to string concatenation.
 

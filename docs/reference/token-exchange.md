@@ -135,7 +135,7 @@ A successful third-party exchange returns `200 OK` with `Content-Type: applicati
 | `access_token` | Always | The third-party OAuth2 access token from the token vault. |
 | `token_type` | Always | Token type, passed through from the stored token (typically `Bearer`). |
 | `issued_token_type` | Always | `urn:ietf:params:oauth:token-type:access_token`. |
-| `expires_in` | Optional | Remaining lifetime in seconds, when the stored token carries expiry. |
+| `expires_in` | Optional | Remaining lifetime in whole seconds. Omitted means unknown; zero means less than one second remains and must not use default caching. |
 | `scope` | Optional | Scopes associated with the token, when they differ from the request. |
 | `refresh_token` | Optional | A refresh token — typically absent, since the broker manages refresh. |
 | `granted_permission_sets` | Optional | Map of permission-set UUID → array of service UUIDs, when the exchange is scoped to specific permission sets. |

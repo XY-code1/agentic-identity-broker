@@ -117,8 +117,8 @@ An operator configures the ExtProc service with gRPC settings and OAuth2 authori
 - **FR-009**: Superseded. Feature 043 rejects missing metadata and forbids no-Bearer pass-through.
 - **FR-010**: The system MUST return the generic 500 ExtProc response for ordinary exchange failures. Feature 043 defines `error_uri`, expired-assertion, and circuit-open exceptions.
 
-- **FR-011**: System MUST cache exchanged tokens keyed by subject token and resource until a safety margin of `max(10s, 10% of expires_in)` before the exchanged token’s expiration time, but for at least half the token lifetime and at least one second, so that requests started just before expiry never carry an expired token
-- **FR-012**: System MUST use extproc.cache.default_ttl when the exchanged token response lacks an expiration time
+- **FR-011**: System MUST cache exchanged tokens by subject token and resource. For positive `expires_in`, the fresh-cache lifetime is `max(expires_in - max(10s, 10% of expires_in), expires_in / 2)`, capped by `cache.max_ttl`. There is no one-second minimum. Explicit nonpositive lifetime MUST NOT enter either the fresh cache or outage fallback. This margin does not guarantee validity for requests in transit. The existing transient-outage fallback can serve a previously cached token until reported lifetime plus five seconds, capped by `cache.max_ttl`, including after its reported expiry.
+- **FR-012**: System MUST use `extproc.cache.default_ttl` only when expiry is unknown because `expires_in` is absent or null. Explicit zero means a known remaining lifetime below one second, not unknown expiry.
 - **FR-013**: Superseded. Feature 043 defines metadata validation and fixed 503 rejection responses.
 
 - **FR-014**: System MUST ensure only one token exchange occurs per subject token/resource when refreshing expired cache entries

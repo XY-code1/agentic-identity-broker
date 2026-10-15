@@ -3917,9 +3917,12 @@ components:
         expires_in:
           type: integer
           format: int64
+          minimum: 0
           description: |
-            Remaining lifetime in seconds. For third-party token exchange it reflects the
-            stored token; for user impersonation it reflects the configured local token TTL.
+            Remaining lifetime in whole seconds. Omitted when expiry is unknown. Zero
+            means the known remaining lifetime is less than one second, not unknown;
+            consumers must not cache it using an unknown-expiry default. For third-party
+            exchange it reflects the stored token; for impersonation it reflects the local TTL.
           example: 3600
         scope:
           type: string
