@@ -76,6 +76,7 @@ An operator wants repeated requests with the same Bearer token and resource to a
 
 1. **Given** a valid exchanged token stored in cache, **When** a new request arrives with the same subject token and resource, **Then** ExtProc uses the cached token without calling token exchange
 2. **Given** a cached exchanged token is expired, **When** a new request arrives, **Then** ExtProc performs a fresh token exchange and updates the cache
+3. **Given** a production broker returns a still-valid token with less than one second remaining and starts background refresh, **When** ExtProc processes the request, **Then** it forwards the current token without waiting for refresh and does not extend its known lifetime through the default cache TTL. After renewal and the original token's expiry, the same subject-token/resource pair obtains and forwards the renewed token.
 
 ---
 
