@@ -191,6 +191,14 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 	}
 
 	acquireCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
+	defer cancel()
+	// Bound every trigger before it can occupy the shared pool, including retry waits.
+	select {
+	case r.adapter.lockedSessionSlots <- struct{}{}:
+		defer func() { <-r.adapter.lockedSessionSlots }()
+	case <-acquireCtx.Done():
+		return nil, r.wrapError(acquireCtx.Err(), "WithLockedSession")
+	}
 	conn, err := r.adapter.db.Connx(acquireCtx)
 	cancel()
 	if err != nil {

@@ -318,12 +318,14 @@ and `internal/config/validator.go` validates centrally:
 | `token_refresh.sweep.default_page_size` | int | `100` | `1 ≤ n ≤ 1000` |
 
 **Rationale**:
-- `background_workers ≤ 20`: each in-flight background refresh holds one PostgreSQL connection for
-  the length of the upstream call (`WithLockedSession` keeps the `FOR UPDATE` transaction open while
-  the callback runs; `user_session.go:159-204`). The pool is fixed at `SetMaxOpenConns(25)`
-  (`internal/adapters/storage/postgres/adapter.go:100`). A cap of 20 keeps at least five connections
-  for request traffic, so background refresh cannot starve the latency-sensitive exchange path this
-  feature exists to protect. The validator error message names this coupling.
+- `background_workers ≤ 20`: each locked background refresh holds one PostgreSQL connection
+  through all provider attempts, retry waits, and token persistence. Two ten-second
+  `Retry-After` waits add 20 connection-seconds per refresh, before provider latency.
+  The worker limit alone does not bound distinct on-demand sessions or concurrent sweeps.
+  The PostgreSQL adapter therefore also limits `WithLockedSession` to 20 operations across
+  all repositories that share its 25-connection pool. Excess operations wait before connection
+  acquisition within the same storage write-timeout budget. This leaves five connections
+  outside locked-session work. Other request traffic can still consume those connections.
 - `default_page_size ≤ 1000`: this bounds session snapshots per page (FR-008). A per-sweep visited-ID set uses O(unique candidates) additional broker memory. The same page bound applies to the request body's `page_size` (R10).
 - Nothing can disable proactive refresh. The spec defines none, and `background_workers ≥ 1` keeps
   the behavior always on.

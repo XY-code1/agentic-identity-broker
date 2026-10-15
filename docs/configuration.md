@@ -251,7 +251,7 @@ Each successful confidential-provider secret decryption emits `service_secret_de
 | Option | Type | Default Value | Valid Values | Required? | Environment Variable | CLI Flag | Description |
 |--------|------|---------------|--------------|-----------|----------------------|----------|-------------|
 | `token_refresh.lookahead_duration` | Go duration string | `5m` | Positive Go duration | No | `IDENTITY_BROKER_TOKEN_REFRESH_LOOKAHEAD_DURATION` | `--token_refresh.lookahead_duration` | Window before access-token expiry for background refresh. Set it shorter than the provider's access-token lifetime. |
-| `token_refresh.background_workers` | integer | `10` | 1–20 | No | `IDENTITY_BROKER_TOKEN_REFRESH_BACKGROUND_WORKERS` | `--token_refresh.background_workers` | Maximum concurrent background refreshes per replica. Each holds a database connection. The 20-worker cap leaves at least five of the 25 pooled connections for other work. |
+| `token_refresh.background_workers` | integer | `10` | 1–20 | No | `IDENTITY_BROKER_TOKEN_REFRESH_BACKGROUND_WORKERS` | `--token_refresh.background_workers` | Maximum concurrent background refreshes per replica. PostgreSQL separately limits all locked-session operations to 20 across background, on-demand, sweep, and reconnect traffic. |
 | `token_refresh.sweep.default_page_size` | integer | `100` | 1–1000 | No | `IDENTITY_BROKER_TOKEN_REFRESH_SWEEP_DEFAULT_PAGE_SIZE` | `--token_refresh.sweep.default_page_size` | Number of candidates per admin sweep page when the request omits `page_size`. |
 
 
@@ -713,7 +713,11 @@ The source order is CLI flags > environment variables > YAML file > defaults. Th
 
 Set `lookahead_duration` to less than the shortest access-token lifetime that your providers issue. Otherwise, every token exchange can submit a refresh while the token remains valid.
 
-Keep `background_workers` between 1 and 20 per replica. A locked refresh holds one database connection during the provider call. The broker's pool has 25 connections. If all slots are busy, the broker drops new background refresh submissions for other sessions and still returns the valid token.
+Keep `background_workers` between 1 and 20 per replica. If all background slots are busy, the broker drops new submissions for other sessions and still returns the valid token.
+
+The PostgreSQL adapter separately limits locked-session operations to 20 across all refresh triggers and reconnects. The worker limit alone does not bound distinct on-demand sessions or concurrent sweeps. Excess operations wait outside the 25-connection pool, leaving five connections outside locked-session work. Admission and connection acquisition share `storage.timeouts.write` (default `10s`) and respect earlier caller cancellation. Saturation can return a storage timeout without a provider call.
+
+Each admitted refresh holds its connection through all provider attempts, retry waits, and token persistence. Two maximum `Retry-After` waits add 20 connection-seconds per refresh, before provider latency. The bounded refresh context limits the total duration. Lower background concurrency leaves more of the shared admission capacity for on-demand refreshes and sweeps.
 
 The admin sweep is not scheduled by the broker. Schedule `POST /api/sessions/sweep` externally through the authenticated admin proxy. See the [session sweep runbook](operations/session-sweep.md) for the request and scheduling instructions.
 

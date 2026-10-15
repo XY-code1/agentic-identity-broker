@@ -16,6 +16,8 @@ Use the proxy URL that matches the broker's configured admin public URL. The pro
 
 Set the caller and proxy timeouts to allow for provider responses and the number of sessions due. A sweep waits for each refresh before it proceeds to the next session. If a request times out, earlier refreshes remain saved. Examine the audit event and session state before you start another sweep.
 
+Provider outages consume database capacity as well as HTTP time. Each refresh keeps its row lock and connection across up to three attempts and two `Retry-After` waits of up to ten seconds. PostgreSQL admits at most 20 locked-session operations across background refreshes, on-demand refreshes, sweeps, and reconnects. Excess operations wait before acquiring a connection and can fail within `storage.timeouts.write` (default `10s`). Five of the 25 pool connections remain outside locked-session work. A sequential sweep does not prevent other sweeps or on-demand sessions from competing for this capacity.
+
 ## Run a sweep
 
 Run a dry run before you schedule the first sweep. The examples use an operator certificate and key for authentication at the proxy. If your proxy uses a different method, use its approved authentication method instead. Keep credentials in restricted files from your credential manager. Set `OPERATOR_CERT_FILE` and `OPERATOR_KEY_FILE` to those file paths.
