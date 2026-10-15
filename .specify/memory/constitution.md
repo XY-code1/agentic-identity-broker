@@ -1,16 +1,3 @@
-<!--
-Sync Impact Report
-Version: 3.0.0 → 4.0.0
-Modified principle: IV. API Documentation & OpenAPI Transparency (title unchanged).
-Removed rule: the duplicate breaking-change record requirement.
-Rationale: existing API contracts and design documents describe compatibility changes.
-Migration: feature plans, tasks, and contracts use their existing documentation.
-Added sections: none.
-Removed sections: none.
-Template changes: none required.
-Follow-up items: none.
--->
-
 # Agentic Identity Broker Constitution
 
 ## Core Principles
@@ -462,10 +449,42 @@ documentation of UI states, making regressions immediately visible during review
 
 ## Development Requirements
 
+### Feature Scope & Deferred Findings
+
+Feature planning, tasks, implementation, and review MUST stay within the approved feature scope.
+Work is in scope only when required by the feature's specification or acceptance scenarios, or
+necessary to make the affected path functional, secure, and compliant with this constitution and
+accepted ADRs. Required tests, integration, documentation, and deployment changes are in scope.
+
+**Rules**:
+- Each planned task MUST be traceable to an approved requirement, acceptance scenario, or binding
+  constraint applicable to the feature. Planners and implementers MUST NOT add improvements merely
+  because they are useful independently of the feature.
+- Unrelated refactoring, code-smell fixes, speculative security hardening, telemetry cleanup, and
+  Helm chart enhancements MUST NOT be bundled into a feature, even when discovered during its work.
+- If a finding prevents safe or compliant delivery of the affected feature path, the minimum
+  necessary correction MUST be made as part of the feature. If that cannot be done while meeting
+  binding security or architectural rules, implementation MUST STOP and the conflict MUST be
+  escalated; scope discipline MUST NOT be used to waive those rules.
+- For actionable findings outside the feature's required work, including suspected security
+  issues, refactoring opportunities, code smells, inconsistencies, and violations of accepted
+  ADRs or prior specifications, implementers MUST describe the finding and ask the user whether
+  to file a GitHub issue. They MUST NOT implement the unrelated change or create an issue without
+  the user's affirmative decision. If affirmed, they MUST create the issue and record its link
+  as future work in the feature's planning or implementation record, not as an implementation
+  task for this feature.
+- Expanding the approved feature scope requires explicit user approval and a corresponding
+  specification and task update before implementation; it cannot override binding controls.
+
+**Rationale**: Separating necessary work from independently worthwhile improvements prevents
+feature drift and keeps reviews tied to approved outcomes. User-approved issues preserve
+unrelated findings without silently enlarging the feature.
+
 ### Compliance Checklist
 
 **PRECONDITIONS (must complete BEFORE implementation begins)**:
 
+- [ ] Every planned task traces to the approved feature scope or an applicable binding constraint
 - [ ] Domain model designed: all entities, aggregates, and value objects identified and documented
 - [ ] Domain concepts added to [ARCHITECTURE.md](../../ARCHITECTURE.md) Glossary section
 - [ ] Configuration requirements designed: example YAML snippets showing all new config options
@@ -483,6 +502,7 @@ documentation of UI states, making regressions immediately visible during review
 
 **Implementation Phase**:
 
+- [ ] Unrelated findings are excluded from implementation; approved GitHub issues are linked as future work only
 - [ ] Security controls are enabled by default and fail closed
 - [ ] [ARCHITECTURE.md](../../ARCHITECTURE.md) reflects architectural changes (if any)
 - [ ] Major decisions recorded in [adrs/](adrs/) with correct numbering
@@ -604,7 +624,7 @@ If Principle XIII (End-to-End Acceptance Testing & Spec Traceability) cannot be 
 1. Propose amendment via PR to [.specify/memory/constitution.md](.specify/memory/constitution.md)
 2. Include rationale, impacted templates, and migration plan
 3. Increment CONSTITUTION_VERSION per semantic versioning rules
-4. Update Sync Impact Report with changes
+4. Prepare or update a temporary Sync Impact Report describing the amendment for review; remove it before committing the amended constitution.
 5. Propagate changes to dependent templates and documentation
 
 ### Versioning Policy
@@ -617,6 +637,8 @@ If Principle XIII (End-to-End Acceptance Testing & Spec Traceability) cannot be 
 
 - All PRs MUST verify compliance with this constitution
 - Reviewers MUST challenge complexity and request justification when principles are violated
+- Reviewers MUST verify that changed work is required by the approved feature or an applicable
+  binding constraint, and that unrelated findings are tracked only with user-approved issue links
 - Reviewers MUST verify that code follows Accepted ADRs already merged into main and the
   final versions of Accepted ADRs introduced in the PR; deviations from main-merged ADRs
   MUST have an accepted superseding ADR (Principle II)
@@ -655,9 +677,9 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
    - All verification tasks with explicit principle references
 
 **OPTIONAL PHASES** (include when applicable — omit when not needed):
-- **Phase 0: Pre-implementation Refactoring** — include when the feature requires significant changes
-  to existing code (rename, restructure, extract interfaces, split files). MUST be submitted as a
-  separate PR from feature work. All existing tests MUST pass after refactoring.
+- **Phase 0: Pre-implementation Refactoring** — include only when the approved feature requires
+  significant changes to existing code (rename, restructure, extract interfaces, split files).
+  MUST be submitted as a separate PR from feature work. All existing tests MUST pass afterward.
 - **Phase 2.7: Entity Boilerplate** — include when the feature introduces new domain entities
   requiring new ports, storage adapters, and HTTP handlers. Creates empty-but-compiling CRUD
   scaffolding (handlers returning 501, empty repository methods) as a separate PR before business
@@ -667,11 +689,13 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 - Phase 1: Setup (project-specific initialization)
 - Phase 2.5: Foundational Infrastructure (feature-specific foundation)
 - Phase 3+: User Stories (based on spec.md user stories)
-- Additional Polish (optional improvements)
+- Feature-specific finishing work required for approved acceptance criteria (if applicable)
 
 **Enforcement**:
 - AI agents generating tasks.md MUST retain Phase 2 and Phase N sections verbatim (adapting only task descriptions to the specific feature)
 - The tasks-template.md uses 🔒 emoji and [MANDATORY] markers to clearly distinguish mandatory from customizable sections
 - Omitting mandatory sections violates this constitution and blocks feature completion
+- Tasks MUST NOT include unrelated remediation or optional improvements; user-approved issue
+  links MAY be recorded as future work, not as tasks for the current feature
 
-**Version**: 4.0.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-10-15
+**Version**: 4.1.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-10-15

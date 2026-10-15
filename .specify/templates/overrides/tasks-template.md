@@ -41,6 +41,12 @@ These sections provide examples that should be replaced with feature-specific ta
 - **Mobile**: `api/src/`, `ios/src/` or `android/src/`
 - Paths shown below assume single project - adjust based on plan.md structure
 
+## 🔒 Feature Scope [MANDATORY]
+
+- Every generated task MUST cite an approved feature requirement or acceptance scenario (ID if available, otherwise title), or a binding constraint applicable to the affected feature path. Include work necessary to make that path functional, secure, and compliant; do not add independent remediation or optional improvements.
+- If a finding blocks safe or compliant delivery, include only the minimum necessary correction. For unrelated findings, ask the user before filing an issue; record only user-approved issue URLs in a non-checkbox `Future Work` note in the feature planning or implementation record, never as feature tasks.
+- Expanding feature scope requires explicit user approval and corresponding updates to `spec.md` and `tasks.md` before implementation.
+
 ---
 
 ## Phase 0: Pre-implementation Refactoring [OPTIONAL]
@@ -48,13 +54,13 @@ These sections provide examples that should be replaced with feature-specific ta
 **Purpose**: Refactor existing code to prepare for the new feature, keeping structural changes
 isolated from feature work for clean, reviewable PRs.
 
-**⚠️ WHEN TO INCLUDE**: Include this phase only when the feature requires significant changes to
+**⚠️ WHEN TO INCLUDE**: Include this phase only when the approved feature requires significant changes to
 existing code — rename, restructure, extract interfaces, split files, consolidate duplicates.
 Skip entirely if the feature only adds new code without touching existing structures.
 
-**📝 REVIEW DISCIPLINE**: Refactoring commits MUST be submitted as a SEPARATE PR (or isolated
-commit batch) from feature implementation. This keeps reviewers focused: first approve structural
-changes with no behavior change, then review new business logic separately.
+**📝 REVIEW DISCIPLINE**: Refactoring commits MUST be submitted as a SEPARATE PR from feature implementation.
+This keeps reviewers focused: first approve structural changes with no behavior change, then
+review new business logic separately.
 
 <!--
   CUSTOMIZABLE SECTION: Replace T000 tasks with refactoring tasks specific to this feature.
@@ -343,9 +349,9 @@ yet — ready for incremental user story implementation
 
 ---
 
-## 🔒 Phase N: Constitution Compliance & Polish [MANDATORY COMPLIANCE SECTION]
+## 🔒 Phase N: Constitution Compliance Verification [MANDATORY COMPLIANCE SECTION]
 
-**Purpose**: Verify constitution requirements and final polish
+**Purpose**: Verify constitution requirements and feature-scope compliance
 
 **🔒 CONSTITUTION REQUIREMENT**: This entire section MUST be included in every tasks.md file. The compliance tasks map directly to the constitution Implementation Phase checklist and MUST be completed before considering the feature done.
 
@@ -357,6 +363,7 @@ yet — ready for incremental user story implementation
 
 **Constitution Reference**: PRECONDITIONS checklist - verify Phase 2 tasks were completed correctly
 
+- [ ] TXXX Verify every task traces to an approved feature requirement, acceptance scenario, or applicable binding constraint (Feature Scope & Deferred Findings)
 - [ ] TXXX Verify domain model design is documented in `ARCHITECTURE.md` Glossary (Principle V)
 - [ ] TXXX Verify configuration design YAML examples exist in `examples/config/` (Principle VII)
 - [ ] TXXX Verify configuration examples referenced in `examples/config/README.md` (Principle VII)
@@ -374,6 +381,9 @@ yet — ready for incremental user story implementation
 #### Implementation Phase Verification [MANDATORY]
 
 **Constitution Reference**: Implementation Phase checklist - verify all principles followed during implementation
+
+**Feature Scope** (Development Requirements):
+- [ ] TXXX Verify unrelated remediation is excluded and user-approved issue URLs appear only under Future Work, not as feature tasks (Feature Scope & Deferred Findings)
 
 **API & Documentation** (Principles IV, X):
 - [ ] TXXX [P] Update `/api/enduser/openapi.yaml` or `/api/admin/openapi.yaml` with implemented APIs
@@ -430,18 +440,6 @@ yet — ready for incremental user story implementation
 - [ ] TXXX [IF FRONTEND] Verify no custom CSS bypassing design tokens
 - [ ] TXXX [IF FRONTEND] Verify WCAG 2.1 AA accessibility compliance (4.5:1 text, 3:1 UI contrast)
 
-### Additional Polish [CUSTOMIZABLE]
-
-<!--
-  CUSTOMIZABLE SECTION: Add feature-specific polish tasks here.
-  These are optional and can be adapted or removed based on feature needs.
--->
-
-- [ ] TXXX Code cleanup and refactoring
-- [ ] TXXX Performance optimization across all stories
-- [ ] TXXX [P] Additional unit tests (if requested) in tests/unit/
-- [ ] TXXX Run quickstart.md validation (if exists)
-
 ---
 
 ## Dependencies & Execution Order
@@ -466,7 +464,7 @@ yet — ready for incremental user story implementation
 - **User Stories (Phase 3+)**: All depend on Phase 2 + Phase 2.5 + Phase 2.7 (if included) completion
   - User stories can then proceed in parallel (if staffed)
   - Or sequentially in priority order (P1 → P2 → P3)
-- **Polish (Final Phase)**: Depends on all desired user stories being complete
+- **Constitution Compliance Verification (Final Phase)**: Depends on all desired user stories being complete
 
 ### User Story Dependencies
 
