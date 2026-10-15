@@ -241,7 +241,7 @@ type UserSessionRepository interface {
 	// ListSummariesByPrincipal returns session listing metadata, including expired sessions, without encrypted token blobs.
 	ListSummariesByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSessionSummary, error)
 
-	// ListActiveServiceIDsByPrincipal returns service IDs of sessions whose refresh token has not expired.
+	// ListActiveServiceIDsByPrincipal returns service IDs with usable access or refresh credentials.
 	ListActiveServiceIDsByPrincipal(ctx context.Context, principal id.Principal) ([]id.ServiceID, error)
 
 	// ListActiveByPrincipal retrieves only non-expired sessions for a principal.

@@ -239,7 +239,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
             label={
               refreshTokenExpiryDate
                 ? `Session might expire after ${refreshTokenExpiryDate}`
-                : 'Session does not expire'
+                : 'Refresh token expiry unknown'
             }
           />
         )}

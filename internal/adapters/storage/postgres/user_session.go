@@ -25,6 +25,11 @@ WHERE access_token_expires_at IS NOT NULL
 ORDER BY access_token_expires_at, id
 LIMIT $4`
 
+// SQL projection of storage.SessionIsUsable; both active-session reads share this predicate.
+const usableSessionPredicate = `(access_token_expires_at IS NULL OR access_token_expires_at > NOW()
+	OR (COALESCE(octet_length(encrypted_refresh_token), 0) > 0
+		AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > NOW())))`
+
 // userSessionRecord is an adapter-local database record struct for user_sessions.
 // It maps directly to the table schema. The Scope field uses pq.StringArray to
 // correctly handle PostgreSQL TEXT[] scanning via pgx/v5/stdlib — the driver
@@ -298,6 +303,7 @@ func (r *PostgresUserSessionRepository) ListSummariesByPrincipal(ctx context.Con
 		}
 		summary := storage.NewUserSessionSummary(&session, "", 0)
 		summary.HasRefreshToken = record.HasRefreshToken
+		summary.IsExpired = !storage.SessionIsUsable(record.AccessTokenExpiresAt, record.RefreshTokenExpiresAt, record.HasRefreshToken)
 		summaries = append(summaries, summary)
 	}
 	return summaries, nil
@@ -311,7 +317,7 @@ func (r *PostgresUserSessionRepository) ListActiveServiceIDsByPrincipal(ctx cont
 	defer cancel()
 	ids := make([]id.ServiceID, 0)
 	err := r.adapter.db.SelectContext(queryCtx, &ids, `SELECT service_id FROM user_sessions WHERE principal = $1
-		AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > NOW()) ORDER BY created_at DESC`, principal)
+		AND `+usableSessionPredicate+` ORDER BY created_at DESC`, principal)
 	if err != nil {
 		return nil, r.wrapError(err, "ListActiveServiceIDsByPrincipal")
 	}
@@ -326,7 +332,7 @@ func (r *PostgresUserSessionRepository) ListActiveByPrincipal(ctx context.Contex
 	}
 
 	var records []*userSessionRecord
-	query := `SELECT * FROM user_sessions WHERE principal = $1 AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > NOW()) ORDER BY created_at DESC`
+	query := `SELECT * FROM user_sessions WHERE principal = $1 AND ` + usableSessionPredicate + ` ORDER BY created_at DESC`
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()

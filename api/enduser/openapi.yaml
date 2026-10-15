@@ -3656,6 +3656,7 @@ components:
           format: date-time
         is_expired:
           type: boolean
+          description: True when neither the access token nor a stored refresh token is usable. An expired access token alone does not expire a refreshable session.
         access_token_expired:
           type: boolean
         has_refresh_token:
@@ -3704,8 +3705,10 @@ components:
         is_expired:
           type: boolean
           description: |
-            True if the refresh token has expired. Session is only marked expired
-            when refresh token expires, not access token (access tokens can be refreshed).
+            True when neither the access token nor a stored refresh token is usable.
+            A session remains usable while its access token is valid or it has a refresh
+            token whose recorded expiry is absent or in the future. An access-only
+            session expires with its access token.
         has_refresh_token:
           type: boolean
           description: Whether a refresh token is stored for this session

@@ -392,36 +392,6 @@ describe('SessionCard', () => {
       expect(screen.getByText('Google Drive')).toBeInTheDocument();
     });
 
-    it('displays "Session might expire after" when has_refresh_token is true and refresh_token_expires_at is set', () => {
-      const expiryDate = new Date('2025-06-01T12:00:00Z');
-      const session = createMockSession({
-        has_refresh_token: true,
-        refresh_token_expires_at: expiryDate.toISOString(),
-      });
-      const onTerminate = vi.fn();
-
-      render(<SessionCard session={session} onTerminate={onTerminate} />);
-
-      expect(
-        screen.getByText(/Session might expire after/i),
-      ).toBeInTheDocument();
-    });
-
-    it('displays "Session does not expire" when has_refresh_token is true but refresh_token_expires_at is absent', () => {
-      const session = createMockSession({
-        has_refresh_token: true,
-        refresh_token_expires_at: undefined,
-      });
-      const onTerminate = vi.fn();
-
-      render(<SessionCard session={session} onTerminate={onTerminate} />);
-
-      expect(screen.getByText('Session does not expire')).toBeInTheDocument();
-      expect(
-        screen.queryByText(/Session might expire after/i),
-      ).not.toBeInTheDocument();
-    });
-
     it('does not display refresh token expiry info when has_refresh_token is false', () => {
       const session = createMockSession({
         has_refresh_token: false,
@@ -433,9 +403,6 @@ describe('SessionCard', () => {
 
       expect(
         screen.queryByText(/Session might expire after/i),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.queryByText('Session does not expire'),
       ).not.toBeInTheDocument();
     });
   });

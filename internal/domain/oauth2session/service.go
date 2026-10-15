@@ -27,8 +27,10 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -800,9 +802,9 @@ func (s *OAuth2SessionService) HandleCallback(
 // RefreshAccessToken calls the upstream OAuth2 service's token endpoint to refresh an expired access token.
 //
 // Per RFC 6749 Section 6, it posts grant_type=refresh_token with the client credentials the
-// provider's client type requires. Transient provider failures (5xx, 429 and connection errors
-// other than timeouts) are retried with exponential backoff up to Config.MaxRetries attempts,
-// honouring a Retry-After of at most ten seconds. Authoritative 4xx rejections are never retried.
+// provider's client type requires. Complete 5xx/429 errors and pre-send dial failures are
+// retried with exponential backoff up to Config.MaxRetries attempts, honouring a Retry-After
+// of at most ten seconds. Ambiguous transport failures and timeouts are not replayed.
 // CIMD clients sign a fresh client assertion for every attempt.
 func (s *OAuth2SessionService) RefreshAccessToken(
 	ctx context.Context,
@@ -924,6 +926,10 @@ func (s *OAuth2SessionService) refreshOnce(
 		data.Set("client_assertion", assertion)
 	}
 
+	var wroteHeaders atomic.Bool
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		WroteHeaders: func() { wroteHeaders.Store(true) },
+	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, entity.Endpoints.TokenEndpoint, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, refreshAttemptOutcome{}, sessionOperationError(ctx, OperationRefresh, DetailConfiguration, err)
@@ -933,10 +939,9 @@ func (s *OAuth2SessionService) refreshOnce(
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		// A timed-out attempt already consumed the full upstream budget; repeating it only
-		// extends how long the session row stays locked.
-		var urlErr *url.Error
-		retryable := errors.As(err, &urlErr) && !urlErr.Timeout() && ctx.Err() == nil
+		// A dial failure is safe only before any request in the redirect chain was sent.
+		var dialErr *net.OpError
+		retryable := errors.As(err, &dialErr) && dialErr.Op == "dial" && !dialErr.Timeout() && !wroteHeaders.Load() && ctx.Err() == nil
 		return nil, refreshAttemptOutcome{retryable: retryable}, sessionOperationError(ctx, OperationRefresh, DetailProviderUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -959,7 +964,7 @@ func (s *OAuth2SessionService) refreshOnce(
 		TokenType    string          `json:"token_type"`
 		ExpiresIn    lifetimeSeconds `json:"expires_in"`
 		RefreshToken string          `json:"refresh_token,omitempty"`
-		Scope        string          `json:"scope,omitempty"`
+		Scope        *string         `json:"scope,omitempty"`
 	}
 	limited := &io.LimitedReader{R: resp.Body, N: maxTokenResponseBytes + 1}
 	if err := json.NewDecoder(limited).Decode(&tokenResp); err != nil {
@@ -980,8 +985,8 @@ func (s *OAuth2SessionService) refreshOnce(
 		expiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 	}
 	extra := map[string]any{}
-	if tokenResp.Scope != "" {
-		extra["scope"] = tokenResp.Scope
+	if tokenResp.Scope != nil {
+		extra["scope"] = *tokenResp.Scope
 	}
 	token := (&oauth2.Token{
 		AccessToken:  tokenResp.AccessToken,
@@ -1031,7 +1036,7 @@ func thirdpartyRefreshError(resp *http.Response) error {
 	return NewOperationError(metadata, errors.Join(&RefreshRejectedError{StatusCode: resp.StatusCode, OAuthError: retrieveErr.ErrorCode}, retrieveErr, err))
 }
 
-func (s *OAuth2SessionService) setSessionTokens(ctx context.Context, session *storage.UserSession, newToken *oauth2.Token) error {
+func (s *OAuth2SessionService) setSessionTokens(ctx context.Context, session *storage.UserSession, newToken *oauth2.Token, flavor model.OAuth2Flavor) error {
 	// Build encryption context for this session - uses service_id only
 	serviceSubject := domainencryption.NewServiceBranchKeySubject(session.ServiceID)
 	encContext := serviceSubject.EncryptionContext()
@@ -1060,6 +1065,17 @@ func (s *OAuth2SessionService) setSessionTokens(ctx context.Context, session *st
 		}
 		session.EncryptedRefreshToken = encryptedRefresh
 		session.RefreshTokenExpiresAt = nil
+	}
+	if newToken.TokenType != "" {
+		session.TokenType = newToken.TokenType
+	}
+	if scope, present := newToken.Extra("scope").(string); present {
+		session.Scope = make([]string, 0)
+		for value := range strings.SplitSeq(scope, flavor.ScopeSeparator()) {
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				session.Scope = append(session.Scope, trimmed)
+			}
+		}
 	}
 
 	// Update timestamp
@@ -1563,7 +1579,7 @@ func (s *OAuth2SessionService) refreshSessionTokens(ctx context.Context, session
 		return sessionOperationError(ctx, OperationRefresh, DetailProviderResponseInvalid, errors.New("upstream provider returned nil token"))
 	}
 
-	if err := s.setSessionTokens(ctx, session, newToken); err != nil {
+	if err := s.setSessionTokens(ctx, session, newToken, service.Flavor); err != nil {
 		s.logger.ErrorContext(ctx, "failed to update session with refreshed tokens", "service_id", serviceID, "oauth2_session", sessionFailureMetadata(err))
 		return err
 	}

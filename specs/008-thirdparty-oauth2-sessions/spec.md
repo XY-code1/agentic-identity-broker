@@ -12,7 +12,7 @@
 - Q: What happens when user initiates multiple OAuth2 flows for the same service simultaneously (race condition)? → A: Use database unique constraint (principal, service_id); first successful callback wins, subsequent callbacks see existing session and skip token storage
 - Q: How does system handle third-party authorization endpoint returning an error instead of authorization code? → A: Parse OAuth2 error response (error, error_description); redirect to sessions page with user-friendly error message displayed; allow immediate retry
 - Q: How does system handle network failures during token exchange? → A: Retry token exchange up to 3 times with exponential backoff (1s, 2s, 4s); if all retries fail, display error message allowing user to retry OAuth2 flow
-- Q: What happens when access token expires but refresh token is still valid? → A: Show session as expired only if refresh token is expired. Expired access tokens will be refreshed in a future iteration transparently to the user
+- Q: When is a session expired? → A: When neither its access token nor a stored refresh token is usable. An access-only session expires with its access token. Unknown refresh-token expiry does not guarantee indefinite validity.
 - Q: What happens if a third-party service is deleted while user sessions exist? → A: Block service deletion with error message listing active session count; admin must manually terminate all user sessions before deleting service
 
 ## User Scenarios & Testing *(mandatory)*
@@ -136,7 +136,7 @@ The consent page stores its selections and original return URL in current-tab `s
 - **Multiple simultaneous OAuth2 flows for same service**: Database unique constraint on (principal, service_id) ensures first successful callback wins. Subsequent callbacks detect existing session and skip token storage, preventing race conditions and token corruption.
 - **Third-party authorization errors**: When third-party returns OAuth2 error (e.g., access_denied, invalid_scope, server_error), system parses error and error_description parameters from callback URL, redirects user to sessions page with user-friendly error message, and allows immediate retry via Login button.
 - **Network failures during token exchange**: System retries token exchange request up to 3 times with exponential backoff (1s, 2s, 4s delays). If all retries fail, displays error message to user allowing them to retry the entire OAuth2 flow from the beginning.
-- **Expired access token with valid refresh token**: Session remains active and is not marked as expired. Future iteration will implement automatic transparent token refresh for agents. Only when refresh token itself expires should session be marked as expired in UI.
+- **Session usability**: A session remains active while its access token is valid or a stored refresh token is usable. An expired access token can refresh transparently. An access-only reconnect becomes expired after its access token expires. Unknown refresh-token expiry permits refresh attempts but must not display as non-expiring.
 - **Third-party service deletion with active sessions**: System blocks service deletion and returns error message showing count of active user sessions. Admin must manually terminate all user sessions before service can be deleted (enforced by ON DELETE RESTRICT foreign key constraint).
 - **Malformed or missing callback parameters**: When third-party returns malformed callback (missing code or state), system redirects to sessions page with error message "Invalid callback parameters" and allows retry via Login button. Missing code treated same as access_denied error.
 - **Redirect URI domain mismatch**: When redirect_uri parameter in authorize request does not match the Host header of the incoming request, system returns 400 Bad Request with error "invalid_redirect_uri" and message "redirect_uri must match the host of the request". Flow does not proceed.
@@ -147,7 +147,7 @@ The consent page stores its selections and original return URL in current-tab `s
 ### Functional Requirements
 
 - **FR-001**: System MUST provide a user interface listing all configured third-party OAuth2 services with active sessions
-- **FR-002**: System MUST display session status for each service including: session existence, initiation timestamp, dependent agent count, encryption status, and expiration status (only marked expired when refresh token expires, not when access token expires)
+- **FR-002**: System MUST display session existence, initiation timestamp, dependent agent count, encryption status, and domain-owned usability status. A session is expired only when neither its access token nor a stored refresh token is usable. Unknown refresh-token expiry MUST NOT display as non-expiring.
 - **FR-003**: System MUST provide a "Login" button for services with expired sessions (replaces Terminate button - user must re-authenticate; cannot terminate expired session)
 - **FR-004**: System MUST provide a "Terminate Session" button for services with established sessions
 - **FR-005**: System MUST expose `GET /api/third-party/{serviceId}/oauth2/authorize` accepting a `redirect_uri` query parameter and a same-origin `POST /api/third-party/{serviceId}/oauth2/authorize` accepting `redirect_uri` and `consent_state_id` form fields to initiate OAuth2 authorization code flow with PKCE

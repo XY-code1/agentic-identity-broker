@@ -181,6 +181,7 @@ func TestUserSessionRepository(t *testing.T) {
 			}
 			if serviceID == expiredServiceID {
 				session.RefreshTokenExpiresAt = &past
+				session.AccessTokenExpiresAt = &past
 			}
 			require.NoError(t, repo.Create(ctx, session))
 		}
@@ -199,6 +200,63 @@ func TestUserSessionRepository(t *testing.T) {
 		assert.False(t, byService[activeServiceID].IsExpired)
 		assert.True(t, byService[expiredServiceID].IsExpired)
 	})
+}
+
+func TestUserSessionRepository_Usability(t *testing.T) {
+	adapter, cleanup := setupUserSessionTestDB(t)
+	defer cleanup()
+	repo := NewUserSessionRepository(adapter)
+	ctx := context.Background()
+	principal := id.Principal("usability@example.com")
+	past, future := time.Now().Add(-time.Hour), time.Now().Add(time.Hour)
+	var wantActive []id.ServiceID
+	wantExpired := map[id.ServiceID]bool{}
+	for _, tc := range []struct {
+		accessExpiry  *time.Time
+		refreshExpiry *time.Time
+		refresh       []byte
+		expired       bool
+	}{
+		{accessExpiry: &past, expired: true},
+		{accessExpiry: &future},
+		{accessExpiry: &past, refresh: []byte("refresh")},
+		{accessExpiry: &past, refresh: []byte("refresh"), refreshExpiry: &future},
+		{accessExpiry: &past, refresh: []byte("refresh"), refreshExpiry: &past, expired: true},
+		{accessExpiry: &future, refresh: []byte("refresh"), refreshExpiry: &past},
+		{},
+	} {
+		serviceID := id.NewServiceID()
+		insertTestService(t, adapter, serviceID)
+		now := time.Now()
+		session := &storage.UserSession{
+			ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID,
+			EncryptedAccessToken: []byte("access"), EncryptedRefreshToken: tc.refresh, TokenType: "Bearer",
+			AccessTokenExpiresAt: tc.accessExpiry, RefreshTokenExpiresAt: tc.refreshExpiry,
+			Scope: []string{}, EncryptionContext: storage.EncryptionContext{ServiceID: serviceID},
+			InitiatedAt: now, CreatedAt: now, UpdatedAt: now,
+		}
+		require.NoError(t, repo.Create(ctx, session))
+		wantExpired[serviceID] = tc.expired
+		if !tc.expired {
+			wantActive = append(wantActive, serviceID)
+		}
+	}
+	ids, err := repo.ListActiveServiceIDsByPrincipal(ctx, principal)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, wantActive, ids)
+	active, err := repo.ListActiveByPrincipal(ctx, principal)
+	require.NoError(t, err)
+	var activeIDs []id.ServiceID
+	for _, session := range active {
+		activeIDs = append(activeIDs, session.ServiceID)
+	}
+	assert.ElementsMatch(t, wantActive, activeIDs)
+	summaries, err := repo.ListSummariesByPrincipal(ctx, principal)
+	require.NoError(t, err)
+	require.Len(t, summaries, len(wantExpired))
+	for _, summary := range summaries {
+		assert.Equal(t, wantExpired[summary.ServiceID], summary.IsExpired, summary.ServiceID)
+	}
 }
 
 func TestUserSessionRefreshLocksAcrossRepositories(t *testing.T) {

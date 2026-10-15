@@ -12,6 +12,7 @@ import (
 
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -113,11 +114,31 @@ func TestHandleCallback_ReconnectWithoutRefreshTokenClearsStoredRefreshToken(t *
 	require.NoError(t, err)
 	assert.Equal(t, "account-b-access", access)
 	assert.False(t, current.CanRefresh())
+	assert.False(t, current.IsExpired())
 	expired := time.Now().Add(-time.Minute)
 	persisted.AccessTokenExpiresAt = &expired
 	require.NoError(t, sessions.Create(ctx, persisted))
 	_, _, err = service.GetValidAccessToken(ctx, principal, serviceID)
 	require.ErrorIs(t, err, oauth2session.ErrRefreshNotAvailable)
+}
+
+func TestListUserSessions_ExcludesSpentAccessOnlyConnectionsFromActiveServices(t *testing.T) {
+	ctx := context.Background()
+	service, _, sessions, _, _, providers := setupServiceWithConfig(t, nil)
+	serviceID := id.NewServiceID()
+	principal := id.Principal("user@example.com")
+	require.NoError(t, providers.Create(ctx, createTestService(serviceID)))
+	seedExpiringSession(t, sessions, principal, serviceID, time.Now().Add(-time.Minute), "", []string{"repo"})
+	summaries, err := service.ListUserSessions(ctx, principal)
+	require.NoError(t, err)
+	require.Len(t, summaries, 1)
+	assert.True(t, summaries[0].IsExpired, "a spent access-only connection must require reauthentication")
+	active, err := sessions.ListActiveByPrincipal(ctx, principal)
+	require.NoError(t, err)
+	assert.Empty(t, active)
+	activeIDs, err := sessions.ListActiveServiceIDsByPrincipal(ctx, principal)
+	require.NoError(t, err)
+	assert.Empty(t, activeIDs)
 }
 
 // 013 US1-S7 from specs/013-token-exchange/spec.md.
@@ -305,6 +326,51 @@ func TestRefreshSession_RFC6749RefreshTokenRetentionAndRotation(t *testing.T) {
 				assert.Nil(t, persisted.RefreshTokenExpiresAt, "the old expiry does not apply to a replacement refresh token")
 			}
 			assert.EqualValues(t, 2, calls.Load())
+		})
+	}
+}
+
+func TestRefreshSession_AppliesExplicitProviderAuthority(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		metadata  string
+		wantScope []string
+		wantType  string
+		flavor    model.OAuth2Flavor
+	}{
+		{name: "narrowed scope and changed type", metadata: `,"scope":"repo","token_type":"DPoP"`, wantScope: []string{"repo"}, wantType: "DPoP"},
+		{name: "explicit empty scope", metadata: `,"scope":""`, wantScope: []string{}, wantType: "Bearer"},
+		{name: "omitted metadata", wantScope: []string{"repo", "user"}, wantType: "Bearer"},
+		{name: "GitHub scope separator", metadata: `,"scope":" repo , read:user "`, flavor: model.OAuth2FlavorGitHub, wantScope: []string{"repo", "read:user"}, wantType: "Bearer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			service, _, sessions, _, _, providers := setupServiceWithConfig(t, nil)
+			serviceID := id.NewServiceID()
+			principal := id.Principal("user@example.com")
+			upstream, _ := jsonTokenEndpoint(func(_ url.Values, _ int32) (int, string) {
+				return http.StatusOK, `{"access_token":"new-access","expires_in":3600,"refresh_token":"rotated"` + tc.metadata + `}`
+			})
+			defer upstream.Close()
+			provider := createTestService(serviceID)
+			provider.Endpoints.TokenEndpoint = upstream.URL
+			if tc.flavor != "" {
+				provider.Flavor = tc.flavor
+			}
+			require.NoError(t, providers.Create(ctx, provider))
+			seedExpiringSession(t, sessions, principal, serviceID, time.Now().Add(-time.Hour), "stored-refresh", []string{"repo", "user"})
+			_, _, err := service.GetValidAccessToken(ctx, principal, serviceID)
+			require.NoError(t, err)
+			stored, err := sessions.FindByPrincipalAndService(ctx, principal, serviceID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantScope, stored.Scope)
+			assert.Equal(t, tc.wantType, stored.TokenType)
+			access, err := service.DecryptAccessToken(ctx, stored)
+			require.NoError(t, err)
+			assert.Equal(t, "new-access", access)
+			refresh, err := service.DecryptRefreshToken(ctx, stored)
+			require.NoError(t, err)
+			assert.Equal(t, "rotated", refresh)
 		})
 	}
 }

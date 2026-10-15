@@ -99,14 +99,16 @@ func (s *UserSession) Validate() error {
 	return nil
 }
 
-// IsExpired returns true if the session's refresh token has expired.
-// Access token expiration does not mark session as expired (future auto-refresh).
-// Session without refresh token expiration is considered non-expiring.
+// IsExpired reports whether the session has neither usable access nor refresh credentials.
 func (s *UserSession) IsExpired() bool {
-	if s.RefreshTokenExpiresAt == nil {
-		return false // No expiration set
-	}
-	return time.Now().After(*s.RefreshTokenExpiresAt)
+	return !SessionIsUsable(s.AccessTokenExpiresAt, s.RefreshTokenExpiresAt, len(s.EncryptedRefreshToken) > 0)
+}
+
+// SessionIsUsable also evaluates metadata projections without loading encrypted token blobs.
+func SessionIsUsable(accessExpiry, refreshExpiry *time.Time, hasRefreshToken bool) bool {
+	now := time.Now()
+	return accessExpiry == nil || accessExpiry.After(now) ||
+		hasRefreshToken && (refreshExpiry == nil || refreshExpiry.After(now))
 }
 
 // HasValidAccessToken returns true if access token has not expired.

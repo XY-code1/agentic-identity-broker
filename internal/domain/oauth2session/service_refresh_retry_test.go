@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"sync/atomic"
 	"testing"
@@ -53,7 +54,7 @@ func TestRefreshAccessToken_RetryPolicy(t *testing.T) {
 	}
 }
 
-func TestRefreshAccessToken_ConnectionFailureIsRetried(t *testing.T) {
+func TestRefreshAccessToken_PreSendDialFailureIsRetried(t *testing.T) {
 	ctx := context.Background()
 	var attempts atomic.Int32
 	upstream, _ := jsonTokenEndpoint(func(_ url.Values, _ int32) (int, string) {
@@ -63,7 +64,7 @@ func TestRefreshAccessToken_ConnectionFailureIsRetried(t *testing.T) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		if attempts.Add(1) == 1 {
-			return nil, errors.New("connection reset by peer")
+			return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connection refused")}
 		}
 		return (&net.Dialer{}).DialContext(ctx, network, addr)
 	}
@@ -75,6 +76,58 @@ func TestRefreshAccessToken_ConnectionFailureIsRetried(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "after-reset", token.AccessToken)
 	assert.EqualValues(t, 2, attempts.Load())
+}
+
+func TestRefreshAccessToken_PostSendConnectionFailureIsNotRetried(t *testing.T) {
+	var attempts atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Error(err)
+			return
+		}
+		if r.Form.Get("refresh_token") != "stored-refresh" {
+			t.Error("unexpected refresh token")
+		}
+		attempts.Add(1)
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		_ = conn.Close()
+	}))
+	defer upstream.Close()
+	service, _, _, _, _, _ := setupServiceWithConfig(t, nil)
+	provider := createTestService(id.NewServiceID())
+	provider.Endpoints.TokenEndpoint = upstream.URL
+
+	_, err := service.RefreshAccessToken(context.Background(), provider, "stored-refresh")
+	assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailProviderUnavailable)
+	assert.EqualValues(t, 1, attempts.Load(), "a processed refresh must not be replayed after its response is lost")
+}
+
+func TestRefreshAccessToken_RedirectedDialFailureIsNotRetried(t *testing.T) {
+	var posts atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posts.Add(1)
+		http.Redirect(w, r, "http://redirect.invalid/token", http.StatusTemporaryRedirect)
+	}))
+	defer upstream.Close()
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if addr == "redirect.invalid:80" {
+			return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connection refused")}
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}
+	defer transport.CloseIdleConnections()
+	service, _, _, _, _, _ := setupServiceWithHTTPClient(t, nil, &http.Client{Transport: transport})
+	provider := createTestService(id.NewServiceID())
+	provider.Endpoints.TokenEndpoint = upstream.URL
+	_, err := service.RefreshAccessToken(context.Background(), provider, "stored-refresh")
+	assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailProviderUnavailable)
+	assert.EqualValues(t, 1, posts.Load(), "a later dial failure must not replay an already-sent POST")
 }
 
 func TestRefreshAccessToken_TimeoutIsNotRetried(t *testing.T) {

@@ -1528,6 +1528,7 @@ func TestListUserSessions_BatchesProvidersAndPreservesExpiredSessions(t *testing
 			ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID,
 			EncryptedAccessToken: []byte("ciphertext"), EncryptedRefreshToken: []byte("refresh"),
 			TokenType: "Bearer", Scope: []string{"read"}, RefreshTokenExpiresAt: &past,
+			AccessTokenExpiresAt: &past,
 		}))
 	}
 	svc := oauth2session.NewOAuth2SessionService(providerService, sessions, sessions,

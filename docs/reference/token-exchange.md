@@ -144,7 +144,9 @@ Token exchange returns a still-valid stored access token immediately. If it expi
 
 After the stored access token expires, the broker waits for an on-demand refresh using the stored refresh token. Concurrent refreshes for the same principal and service share work in one process. Across replicas, the broker locks and re-reads the session before refreshing and committing rotated tokens.
 
-Refresh retries transient provider failures (HTTP 5xx, 429, connection errors) with up to three attempts and exponential backoff (1s, 2s). It honors `Retry-After` up to 10 seconds and does not retry timeouts or other HTTP 4xx responses. The broker accepts access-token `expires_in` as a JSON number or numeric string and persists recorded expiries, token type, and scope.
+Refresh retries complete HTTP 5xx and 429 error responses and pre-send dial failures, with at most three attempts and backoff delays of 1s and 2s. It honors `Retry-After` up to 10 seconds. It does not retry timeouts, other HTTP 4xx responses, or ambiguous transport failures after sending request headers. A lost response can lose a provider rotation. The broker leaves stored credentials unchanged; a later provider rejection can require login.
+
+Refresh commits explicit provider token type and scope with the new credentials. Omitted scope retains the stored scope; an explicit empty scope clears it. Scope narrowing therefore applies to subsequent exchange authorization and responses. Session lists and consent checks consider a connection usable while its access token is valid or its stored refresh token is usable. An access-only connection requires login after access-token expiry. Unknown refresh-token expiry does not guarantee indefinite validity.
 
 During refresh, absent or null `expires_in` metadata leaves expiry unspecified. Malformed or unrepresentable values, including positive lifetimes below one second, fail with `provider_response_invalid` instead of producing a non-expiring token. Other positive fractions are truncated to whole seconds.
 
