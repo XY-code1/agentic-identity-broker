@@ -38,6 +38,7 @@ func TestUserSessionRefreshPersistsRefreshExpiryAndScope(t *testing.T) {
 	_, err := repo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, session *storage.UserSession) (bool, error) {
 		session.EncryptedAccessToken = []byte("new-access")
 		session.EncryptedRefreshToken = []byte("new-refresh")
+		session.TokenType = "DPoP"
 		session.AccessTokenExpiresAt = &newAccessExpiry
 		session.RefreshTokenExpiresAt = &newRefreshExpiry
 		session.Scope = []string{"repo"}
@@ -50,6 +51,7 @@ func TestUserSessionRefreshPersistsRefreshExpiryAndScope(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, persisted)
 	assert.Equal(t, []byte("new-refresh"), persisted.EncryptedRefreshToken)
+	assert.Equal(t, "DPoP", persisted.TokenType)
 	require.NotNil(t, persisted.RefreshTokenExpiresAt, "refresh_token_expires_at must be committed by the refresh transaction")
 	assert.WithinDuration(t, newRefreshExpiry, *persisted.RefreshTokenExpiresAt, time.Second)
 	assert.Equal(t, []string{"repo"}, persisted.Scope, "scope narrowed on refresh must be committed")

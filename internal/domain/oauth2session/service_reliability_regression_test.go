@@ -130,7 +130,7 @@ func TestHandleCallback_FirstCompletionWinsUntilANewReconnect(t *testing.T) {
 			serviceID := id.NewServiceID()
 			principal := id.Principal("user@example.com")
 			upstream, _ := jsonTokenEndpoint(func(form url.Values, _ int32) (int, string) {
-				return http.StatusOK, fmt.Sprintf(`{"access_token":%q,"token_type":"Bearer","expires_in":3600}`, form.Get("code"))
+				return http.StatusOK, fmt.Sprintf(`{"access_token":%q,"refresh_token":%q,"token_type":"Bearer","expires_in":3600}`, form.Get("code"), form.Get("code")+"-refresh")
 			})
 			defer upstream.Close()
 			provider := createTestService(serviceID)
@@ -156,12 +156,18 @@ func TestHandleCallback_FirstCompletionWinsUntilANewReconnect(t *testing.T) {
 			access, err := service.DecryptAccessToken(ctx, stored)
 			require.NoError(t, err)
 			assert.Equal(t, "winning-account", access)
+			refresh, err := service.DecryptRefreshToken(ctx, stored)
+			require.NoError(t, err)
+			assert.Equal(t, "winning-account-refresh", refresh)
 			complete(start(), "deliberate-reconnect")
 			stored, err = sessions.FindByPrincipalAndService(ctx, principal, serviceID)
 			require.NoError(t, err)
 			access, err = service.DecryptAccessToken(ctx, stored)
 			require.NoError(t, err)
 			assert.Equal(t, "deliberate-reconnect", access)
+			refresh, err = service.DecryptRefreshToken(ctx, stored)
+			require.NoError(t, err)
+			assert.Equal(t, "deliberate-reconnect-refresh", refresh)
 		})
 	}
 }

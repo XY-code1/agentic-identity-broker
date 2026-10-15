@@ -101,6 +101,43 @@ func TestUserSessionAdmissionWaitDoesNotBorrowConnection(t *testing.T) {
 	})
 }
 
+func TestUserSessionAdmissionAndConnectionShareTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		repo := newAdmissionTestRepository(t, signingKeyRepoTestConfig{})
+		repo.adapter.db.SetMaxOpenConns(1)
+		conn, err := repo.adapter.db.Connx(context.Background())
+		require.NoError(t, err)
+		closeConn := sync.OnceFunc(func() { assert.NoError(t, conn.Close()) })
+		defer closeConn()
+		for range cap(repo.adapter.lockedSessionSlots) {
+			repo.adapter.lockedSessionSlots <- struct{}{}
+		}
+		start := time.Now()
+		done := make(chan error, 1)
+		go func() {
+			_, err := repo.WithLockedSession(context.Background(), "waiting-user", id.NewServiceID(), func(context.Context, *storage.UserSession) (bool, error) {
+				return false, errors.New("callback ran while connection pool was full")
+			})
+			done <- err
+		}()
+		synctest.Wait()
+		time.Sleep(750 * time.Millisecond)
+		<-repo.adapter.lockedSessionSlots
+		synctest.Wait()
+		assert.Equal(t, int64(1), repo.adapter.db.Stats().WaitCount, "operation must reach connection acquisition after admission")
+		require.ErrorIs(t, <-done, context.DeadlineExceeded)
+		assert.Equal(t, repo.adapter.timeouts.Write, time.Since(start), "connection acquisition must not restart the admission deadline")
+		assert.Len(t, repo.adapter.lockedSessionSlots, cap(repo.adapter.lockedSessionSlots)-1, "timed-out acquisition must return its slot")
+		for range cap(repo.adapter.lockedSessionSlots) - 1 {
+			<-repo.adapter.lockedSessionSlots
+		}
+		closeConn()
+		repo.adapter.db.SetMaxOpenConns(25)
+		release := holdAdmissionTestBatch(t, repo)
+		release()
+	})
+}
+
 func TestUserSessionAdmissionRecoversFullCapacityAfterFailures(t *testing.T) {
 	failure := errors.New("injected refresh failure")
 	for _, tc := range []struct {
