@@ -225,6 +225,10 @@ type UserSessionRepository interface {
 	// - Operation timeout (StorageError with Kind=Timeout)
 	Create(ctx context.Context, session *storage.UserSession) error
 
+	// CreateIfAbsent inserts a first connection without replacing a competing callback's session.
+	// Returns the inserted session or the existing winner.
+	CreateIfAbsent(ctx context.Context, session *storage.UserSession) (*storage.UserSession, error)
+
 	// Get retrieves a session by ID.
 	// Returns StorageError with Kind=NotFound if session not found.
 	Get(ctx context.Context, id id.SessionID) (*storage.UserSession, error)
@@ -241,7 +245,7 @@ type UserSessionRepository interface {
 	// ListSummariesByPrincipal returns session listing metadata, including expired sessions, without encrypted token blobs.
 	ListSummariesByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSessionSummary, error)
 
-	// ListActiveServiceIDsByPrincipal returns service IDs of sessions whose refresh token has not expired.
+	// ListActiveServiceIDsByPrincipal returns service IDs with usable access or refresh credentials.
 	ListActiveServiceIDsByPrincipal(ctx context.Context, principal id.Principal) ([]id.ServiceID, error)
 
 	// ListActiveByPrincipal retrieves only non-expired sessions for a principal.
@@ -264,9 +268,10 @@ type UserSessionRepository interface {
 	CountByService(ctx context.Context, serviceID id.ServiceID) (int, error)
 }
 
-// UserSessionRefreshRepository serializes a read-modify-write refresh for one session.
-// The callback sees the latest session under a lock; it returns true only when it
-// has replaced the encrypted tokens and the adapter must persist them atomically.
+// UserSessionRefreshRepository serializes a read-modify-write of one session's tokens, used by
+// refresh and by re-connect. The callback sees the latest session under a lock; it returns true
+// only when it has changed the session and the adapter must atomically persist the encrypted
+// tokens, both expiries, token type, scope, encryption context and callback generation.
 // A nil session means the principal has no session for that service.
 type UserSessionRefreshRepository interface {
 	WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error)

@@ -162,7 +162,7 @@
 
 - [x] T031 [US2] Implement in-memory token cache with `sync.RWMutex` + `map[tokenCacheKey]*cachedToken` in `internal/extproc/server/exchanger.go` (struct key: `{subjectToken, resourceURI}` — no hash, direct map key)
 - [x] T032 [US2] Integrate `singleflight.Group` for concurrent cache refresh deduplication in `internal/extproc/server/exchanger.go`
-- [x] T033 [US2] Implement cache TTL logic: use `expires_in` from exchange response, fall back to `cache.default_ttl` when absent or ≤0, cap at `cache.max_ttl` in `internal/extproc/server/exchanger.go`
+- [x] T033 [US2] Implement cache TTL logic: use positive `expires_in` with the FR-011 margin, use `cache.default_ttl` only for unknown expiry, do not cache explicit nonpositive lifetime, cap at `cache.max_ttl` in `internal/extproc/server/exchanger.go`
 - [x] T034 [US2] Implement background cache eviction goroutine (ticker at `default_ttl / 2`, sweep expired entries) in `internal/extproc/server/exchanger.go`
 - [x] T035 [US2] Wire cache lookup into Exchange method: check cache before calling doExchange, store result after successful exchange in `internal/extproc/server/exchanger.go`
 

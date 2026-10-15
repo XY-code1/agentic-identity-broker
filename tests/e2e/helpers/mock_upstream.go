@@ -73,9 +73,12 @@ type MockUpstreamOAuth2Server struct {
 	tokenResponseGate       chan struct{}
 	accessToken             string
 	refreshToken            string
+	omitRefreshToken        bool
 	tokenType               string
-	expiresIn               int
+	expiresIn               any
 	strictPublicClientMode  bool
+	transientFailureStatus  int
+	transientFailuresLeft   int
 	codeChallengesByCode    map[string]pkceChallenge
 
 	// RSA key pair for JWT signing (generated on init)
@@ -175,6 +178,14 @@ func (m *MockUpstreamOAuth2Server) WithRefreshToken(token string) *MockUpstreamO
 	defer m.requestMutex.Unlock()
 
 	m.refreshToken = token
+	m.omitRefreshToken = false
+	return m
+}
+
+func (m *MockUpstreamOAuth2Server) WithOmittedRefreshToken() *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+	m.omitRefreshToken = true
 	return m
 }
 
@@ -235,6 +246,25 @@ func (m *MockUpstreamOAuth2Server) WithExpiresIn(seconds int) *MockUpstreamOAuth
 	defer m.requestMutex.Unlock()
 
 	m.expiresIn = seconds
+	return m
+}
+
+func (m *MockUpstreamOAuth2Server) WithStringExpiresIn(seconds int) *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+	m.expiresIn = fmt.Sprint(seconds)
+	return m
+}
+
+// WithTransientTokenFailures makes the next count token requests fail with the given HTTP
+// status and a JSON error body before the configured response is served again. It simulates a
+// provider outage that recovers while the broker is refreshing or exchanging tokens.
+func (m *MockUpstreamOAuth2Server) WithTransientTokenFailures(status int, count int) *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+
+	m.transientFailureStatus = status
+	m.transientFailuresLeft = count
 	return m
 }
 
@@ -446,6 +476,18 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	m.requestMutex.Lock()
+	if m.transientFailuresLeft > 0 {
+		m.transientFailuresLeft--
+		status := m.transientFailureStatus
+		m.requestMutex.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "temporarily_unavailable"})
+		return
+	}
+	m.requestMutex.Unlock()
+
 	m.requestMutex.RLock()
 	blockTokenUntilCanceled := m.blockTokenUntilCanceled
 	responseDelay := m.responseDelay
@@ -456,6 +498,7 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 	tokenType := m.tokenType
 	expiresIn := m.expiresIn
 	refreshToken := m.refreshToken
+	omitRefreshToken := m.omitRefreshToken
 	m.requestMutex.RUnlock()
 
 	if blockTokenUntilCanceled {
@@ -492,10 +535,12 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusOK)
 
 	tokenResp := map[string]interface{}{
-		"access_token":  accessToken,
-		"token_type":    tokenType,
-		"expires_in":    expiresIn,
-		"refresh_token": refreshToken,
+		"access_token": accessToken,
+		"token_type":   tokenType,
+		"expires_in":   expiresIn,
+	}
+	if !omitRefreshToken {
+		tokenResp["refresh_token"] = refreshToken
 	}
 
 	_ = json.NewEncoder(w).Encode(tokenResp)

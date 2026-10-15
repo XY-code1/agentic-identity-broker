@@ -15,12 +15,18 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+const (
+	maxOpenConnections = 25
+	maxLockedSessions  = maxOpenConnections - 5
+)
+
 // Adapter implements storage repository and lifecycle helpers
 // using PostgreSQL as the persistence backend.
 type Adapter struct {
-	db       *sqlx.DB
-	config   *ports.StorageConfig
-	timeouts ports.StorageTimeouts
+	db                 *sqlx.DB
+	config             *ports.StorageConfig
+	timeouts           ports.StorageTimeouts
+	lockedSessionSlots chan struct{}
 }
 
 // NewAdapter creates a new PostgreSQL storage adapter.
@@ -64,8 +70,9 @@ func NewAdapter(config *ports.StorageConfig) (*Adapter, error) {
 	}
 
 	return &Adapter{
-		config:   config,
-		timeouts: timeouts,
+		config:             config,
+		timeouts:           timeouts,
+		lockedSessionSlots: make(chan struct{}, maxLockedSessions),
 	}, nil
 }
 
@@ -97,7 +104,7 @@ func (a *Adapter) Initialize(ctx context.Context) error {
 	}
 
 	// Configure connection pool
-	db.SetMaxOpenConns(25)
+	db.SetMaxOpenConns(maxOpenConnections)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(1 * time.Hour)
 	db.SetConnMaxIdleTime(15 * time.Minute)

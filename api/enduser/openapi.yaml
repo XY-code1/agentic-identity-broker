@@ -901,7 +901,15 @@ paths:
 
         - Exchanges authorization code for access/refresh tokens (with PKCE)
         - Encrypts tokens using EncryptionPort
-        - Stores session in database
+        - Stores a new session only if no competing callback already created it
+        - Reconnects replace credentials only if the session still matches the private
+          callback generation sealed when authorization began. The first completed callback
+          from a shared starting state wins; competing callbacks return success without
+          replacing its credentials. A later deliberate reconnect captures the new generation.
+          Refresh does not invalidate a reconnect, and reconnect cannot recreate a deleted session.
+        - If an accepted reconnect response omits refresh_token,
+          the broker clears the stored refresh token and its expiry to prevent mixing upstream accounts.
+          The connection requires login again after the new access token expires.
         - Redirects to the original redirect_uri with success=true and service_id;
           for form-initiated flows, also adds the validated consent_state_id so the
           originating tab can recover its return-page data and remove that ID from the URL
@@ -3653,6 +3661,7 @@ components:
           format: date-time
         is_expired:
           type: boolean
+          description: True when neither the access token nor a stored refresh token is usable. An expired access token alone does not expire a refreshable session.
         access_token_expired:
           type: boolean
         has_refresh_token:
@@ -3661,6 +3670,7 @@ components:
           type: string
           format: date-time
           nullable: true
+          description: Recorded refresh-token expiry, if known. Omission or null does not guarantee that the token never expires.
         dependent_agent_count:
           type: integer
           minimum: 0
@@ -3696,12 +3706,14 @@ components:
           type: string
           format: date-time
           nullable: true
-          description: When the refresh token expires (null if never or unknown)
+          description: Recorded refresh-token expiry, if known. Omission or null does not guarantee that the token never expires.
         is_expired:
           type: boolean
           description: |
-            True if the refresh token has expired. Session is only marked expired
-            when refresh token expires, not access token (access tokens can be refreshed).
+            True when neither the access token nor a stored refresh token is usable.
+            A session remains usable while its access token is valid or it has a refresh
+            token whose recorded expiry is absent or in the future. An access-only
+            session expires with its access token.
         has_refresh_token:
           type: boolean
           description: Whether a refresh token is stored for this session
@@ -3910,9 +3922,12 @@ components:
         expires_in:
           type: integer
           format: int64
+          minimum: 0
           description: |
-            Remaining lifetime in seconds. For third-party token exchange it reflects the
-            stored token; for user impersonation it reflects the configured local token TTL.
+            Remaining lifetime in whole seconds. Omitted when expiry is unknown. Zero
+            means the known remaining lifetime is less than one second, not unknown;
+            consumers must not cache it using an unknown-expiry default. For third-party
+            exchange it reflects the stored token; for impersonation it reflects the local TTL.
           example: 3600
         scope:
           type: string

@@ -135,12 +135,20 @@ A successful third-party exchange returns `200 OK` with `Content-Type: applicati
 | `access_token` | Always | The third-party OAuth2 access token from the token vault. |
 | `token_type` | Always | Token type, passed through from the stored token (typically `Bearer`). |
 | `issued_token_type` | Always | `urn:ietf:params:oauth:token-type:access_token`. |
-| `expires_in` | Optional | Remaining lifetime in seconds, when the stored token carries expiry. |
+| `expires_in` | Optional | Remaining lifetime in whole seconds. Omitted means unknown; zero means less than one second remains and must not use default caching. |
 | `scope` | Optional | Scopes associated with the token, when they differ from the request. |
 | `refresh_token` | Optional | A refresh token — typically absent, since the broker manages refresh. |
 | `granted_permission_sets` | Optional | Map of permission-set UUID → array of service UUIDs, when the exchange is scoped to specific permission sets. |
 
-When a stored access token expires, the broker refreshes it using the stored refresh token. Concurrent exchanges for the same principal and service share a refresh in one process; across replicas, the broker locks and re-reads the session before refreshing and committing rotated tokens.
+Token exchange returns a still-valid stored access token immediately. If it expires within `token_refresh.lookahead_duration` (default `5m`) and has a usable refresh token, the broker submits background refresh work. The exchange does not wait for that work. A failed or dropped background refresh does not change the response. The lookahead window does not guarantee a minimum remaining lifetime for the returned token.
+
+After the stored access token expires, the broker waits for an on-demand refresh using the stored refresh token. Concurrent refreshes for the same principal and service share work in one process. Across replicas, the broker locks and re-reads the session before refreshing and committing rotated tokens.
+
+Refresh retries complete HTTP 5xx and 429 error responses and pre-send dial failures, with at most three attempts and backoff delays of 1s and 2s. It honors `Retry-After` up to 10 seconds; larger values, including numeric overflow, stop retries. It does not retry incomplete response bodies, timeouts, other HTTP 4xx responses, or ambiguous transport failures after sending request headers. A lost response can lose a provider rotation. The broker leaves stored credentials unchanged; a later provider rejection can require login.
+
+Refresh commits explicit provider token type and scope with the new credentials. Omitted scope retains the stored scope; an explicit empty scope clears it. Scope narrowing therefore applies to subsequent exchange authorization and responses. Session lists and consent checks consider a connection usable while its access token is valid or its stored refresh token is usable. An access-only connection requires login after access-token expiry. Unknown refresh-token expiry does not guarantee indefinite validity.
+
+During refresh, absent or null `expires_in` metadata leaves expiry unspecified. Malformed or unrepresentable values, including positive lifetimes below one second, fail with `provider_response_invalid` instead of producing a non-expiring token. Other positive fractions are truncated to whole seconds.
 
 ### Success example
 
@@ -297,6 +305,7 @@ Session `OperationError` carries immutable operation/detail/kind/dependency/stat
 Origin metadata maps to exchange diagnostics without inspecting error text.
 ExtProc `OperationError` captures its diagnostic once at construction. Callers cannot override that snapshot.
 Individual caller cancellation is `canceled` at its current stage. Shared-operation and dependency deadlines remain infrastructure failures.
+Cancellation during provider refresh backoff retains the last provider error as a cause, including its dependency, HTTP status, and allowlisted OAuth error code.
 
 Telemetry identifies registered services with `token_exchange.service.id`, not requested URIs or service display names.
 Broker exchange logs and spans also carry scalar resolved authorization context; these fields are not metric labels or response fields:

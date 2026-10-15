@@ -33,6 +33,7 @@ func TestUserSessionRepository_ListingExcludesTokenBlobs(t *testing.T) {
 	expired := refreshTestSession(principal, id.NewServiceID())
 	past := time.Now().Add(-time.Minute)
 	expired.RefreshTokenExpiresAt = &past
+	expired.AccessTokenExpiresAt = &past
 	require.NoError(t, repo.Create(ctx, active))
 	require.NoError(t, repo.Create(ctx, expired))
 	require.NoError(t, repo.Create(ctx, refreshTestSession(id.Principal("other@example.com"), id.NewServiceID())))

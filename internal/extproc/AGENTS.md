@@ -202,8 +202,9 @@ Call `LoadWithCommand()` in `cmd/extproc-token-exchange/root.go`. Do not read co
 ### 5. Token cache design
 
 - Cache entries use `tokenCacheKey{subjectToken, resourceURI}` with `sync.RWMutex` and `singleflight`.
-- The TTL comes from `expires_in` or `cache.default_ttl`. It does not exceed `cache.max_ttl`.
-- Expired entries stay until their fixed `staleUntil` deadline. During transient broker errors, the exchanger can return this bounded stale token.
+- Only absent or null `expires_in` uses `cache.default_ttl`. Explicit nonpositive lifetime is not cached or available for outage fallback.
+- Positive lifetime uses a fresh-cache margin of `max(10s, 10% of lifetime)`, limited to half the lifetime. There is no one-second minimum. `cache.max_ttl` caps all cache use.
+- Transient broker errors can serve a previously cached token until reported lifetime plus 5 seconds, within `cache.max_ttl`. This can exceed reported token expiry. The fresh-cache margin does not guarantee validity in transit.
 - `granted_permission_sets` uses the same cache window as the access token.
 
 ### 6. Client assertion refresh

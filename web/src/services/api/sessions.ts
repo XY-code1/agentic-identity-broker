@@ -31,7 +31,7 @@ export interface SessionSummary {
   /** ISO 8601 timestamp when session was initiated */
   initiated_at: string;
 
-  /** Whether the entire session is expired */
+  /** Neither access nor stored refresh credentials are usable */
   is_expired: boolean;
 
   /** Whether the access token specifically is expired */
@@ -40,7 +40,7 @@ export interface SessionSummary {
   /** Whether a refresh token is stored for this session */
   has_refresh_token: boolean;
 
-  /** ISO 8601 timestamp when refresh token expires (if applicable) */
+  /** Recorded refresh-token expiry; absent means unknown, not indefinite */
   refresh_token_expires_at?: string;
 
   /** Number of agents depending on this session */

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	storagedomain "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
+	extprochelpers "github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/helpers"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 )
@@ -249,6 +251,39 @@ var _ = Describe("Proactive Token Refresh", func() {
 				}).Should(BeTrue())
 				Expect(proactiveExchangeBody(proactiveExchange(enduser, proactiveExchangeForm(upstream, principal, agent)), http.StatusOK)["access_token"]).To(Equal("renewed-github-token"))
 				Consistently(func() int { return len(upstream.GetTokenRequests()) }, 200*time.Millisecond).Should(Equal(1))
+			})
+
+			// US2-S3 from specs/015-extproc-token-exchange/spec.md.
+			It("should replace a near-expiry token through broker and ExtProc without extending its lifetime", func() {
+				form := proactiveExchangeForm(upstream, principal, agent)
+				policyPath, err := filepath.Abs("extproc/fixtures/policies/allow_all.rego")
+				Expect(err).NotTo(HaveOccurred())
+				environment, err := bootstrap.NewExtProcEnvironment(enduser.BaseURL(), form.Get("client_assertion"), policyPath, logger)
+				Expect(err).NotTo(HaveOccurred())
+				defer environment.Close()
+				client, connection := extprochelpers.ConnectToExtProc(environment.Address)
+				defer func() { Expect(connection.Close()).To(Succeed()) }()
+				request := extprochelpers.NewRequestHeaders().
+					WithTokenExchangeMetadata(form.Get("subject_token"), "https://api.github.com").
+					WithAgentgatewayProtocol("mcp").BuildWithMetadata()
+				original := storedSession(principal)
+				oldExpiry := time.Now().Add(900 * time.Millisecond)
+				original.AccessTokenExpiresAt = &oldExpiry
+				seedSession(original)
+
+				response := extprochelpers.SendRequestHeaders(ctx, client, request)
+				Expect(extprochelpers.ExtractMutatedAuthorizationHeader(response)).To(Equal("Bearer github-token-xyz"))
+				Expect(time.Now()).To(BeTemporally("<", oldExpiry))
+				Eventually(func() int { return len(upstream.GetTokenRequests()) }).Should(Equal(1))
+				Expect(*storedSession(principal).AccessTokenExpiresAt).To(Equal(oldExpiry))
+				release()
+				Eventually(func() bool {
+					return storedSession(principal).AccessTokenExpiresAt.After(time.Now().Add(30 * time.Minute))
+				}).Should(BeTrue())
+				Eventually(time.Now, 2*time.Second, 10*time.Millisecond).Should(BeTemporally(">", oldExpiry))
+				response = extprochelpers.SendRequestHeaders(ctx, client, request)
+				Expect(extprochelpers.ExtractMutatedAuthorizationHeader(response)).To(Equal("Bearer " + "renewed-github-token"))
+				Expect(upstream.GetTokenRequests()).To(HaveLen(1))
 			})
 
 			// US1-S3 from specs/029-proactive-token-refresh/spec.md

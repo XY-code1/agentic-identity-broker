@@ -34,9 +34,9 @@ type AuthorizationRef struct {
 //
 // Domain invariants:
 // - AccessToken must not be empty
-// - TokenType must be "Bearer" (per RFC 6750)
+// - TokenType must not be empty
 // - IssuedTokenType must be a valid token type constant
-// - ExpiresIn should be positive if set (> 0)
+// - ExpiresIn must be non-negative when present
 //
 // The response is serializable to JSON for HTTP transmission.
 // Token values are NOT included in String() representations (per SR-005).
@@ -58,11 +58,9 @@ type TokenExchangeResponse struct {
 	// May also indicate other token types depending on the target service.
 	IssuedTokenType string `json:"issued_token_type"`
 
-	// ExpiresIn is the access token's lifetime in seconds.
-	// RECOMMENDED in RFC 8693 response.
-	// If present, indicates when the token will expire.
-	// Value of 0 means not set or token does not expire.
-	ExpiresIn int64 `json:"expires_in,omitempty"`
+	// ExpiresIn is the remaining lifetime in whole seconds. Nil means unknown;
+	// zero means the known remaining lifetime is less than one second.
+	ExpiresIn *int64 `json:"expires_in,omitempty"`
 
 	// RefreshToken is an optional refresh token for obtaining new access tokens.
 	// Optional in RFC 8693 - only included if the target service provides it.
@@ -87,32 +85,13 @@ type TokenExchangeResponse struct {
 
 // NewTokenExchangeResponse creates a new token exchange response.
 // All parameters are required for a minimal valid response.
-// Optional fields (RefreshToken, Scope, ExpiresIn) can be set to zero/empty values.
+// Expiry is unknown unless the caller supplies it through the full constructor.
 func NewTokenExchangeResponse(accessToken, tokenType, issuedTokenType string) *TokenExchangeResponse {
-	return &TokenExchangeResponse{
-		AccessToken:     accessToken,
-		TokenType:       tokenType,
-		IssuedTokenType: issuedTokenType,
-		ExpiresIn:       0, // Not set
-		RefreshToken:    "",
-		Scope:           "",
-	}
-}
-
-// NewTokenExchangeResponseWithExpiry creates a token exchange response with expiration time.
-func NewTokenExchangeResponseWithExpiry(accessToken, tokenType, issuedTokenType string, expiresIn int64) *TokenExchangeResponse {
-	return &TokenExchangeResponse{
-		AccessToken:     accessToken,
-		TokenType:       tokenType,
-		IssuedTokenType: issuedTokenType,
-		ExpiresIn:       expiresIn,
-		RefreshToken:    "",
-		Scope:           "",
-	}
+	return NewTokenExchangeResponseFull(accessToken, tokenType, issuedTokenType, "", "", nil)
 }
 
 // NewTokenExchangeResponseFull creates a token exchange response with all optional fields.
-func NewTokenExchangeResponseFull(accessToken, tokenType, issuedTokenType, refreshToken, scope string, expiresIn int64) *TokenExchangeResponse {
+func NewTokenExchangeResponseFull(accessToken, tokenType, issuedTokenType, refreshToken, scope string, expiresIn *int64) *TokenExchangeResponse {
 	return &TokenExchangeResponse{
 		AccessToken:     accessToken,
 		TokenType:       tokenType,
@@ -130,7 +109,7 @@ func NewTokenExchangeResponseFull(accessToken, tokenType, issuedTokenType, refre
 // 1. AccessToken must not be empty (REQUIRED)
 // 2. TokenType must not be empty and should be "Bearer" (REQUIRED)
 // 3. IssuedTokenType must not be empty (REQUIRED per RFC 8693)
-// 4. ExpiresIn should be positive if set (> 0), or 0 for unset
+// 4. ExpiresIn must be non-negative when present
 func (resp *TokenExchangeResponse) Validate() error {
 	if resp.AccessToken == "" {
 		return fmt.Errorf("access_token is required")
@@ -144,8 +123,7 @@ func (resp *TokenExchangeResponse) Validate() error {
 		return fmt.Errorf("issued_token_type is required")
 	}
 
-	// ExpiresIn validation: if set (non-zero), should be positive
-	if resp.ExpiresIn < 0 {
+	if resp.ExpiresIn != nil && *resp.ExpiresIn < 0 {
 		return fmt.Errorf("expires_in must be non-negative")
 	}
 
@@ -167,7 +145,7 @@ func (resp *TokenExchangeResponse) String() string {
 	return fmt.Sprintf("TokenExchangeResponse{tokenType=%q, issuedTokenType=%q, expiresIn=%d, hasRefreshToken=%v, hasScope=%v}",
 		resp.TokenType,
 		resp.IssuedTokenType,
-		resp.ExpiresIn,
+		resp.GetExpirationSeconds(),
 		resp.RefreshToken != "",
 		resp.Scope != "",
 	)
@@ -189,21 +167,9 @@ func (resp *TokenExchangeResponse) WithScope(scope string) *TokenExchangeRespons
 	return &newResp
 }
 
-// WithExpiresIn returns a new response with ExpiresIn set.
-// Useful for building responses incrementally.
-func (resp *TokenExchangeResponse) WithExpiresIn(expiresIn int64) *TokenExchangeResponse {
-	newResp := *resp
-	newResp.ExpiresIn = expiresIn
-	return &newResp
-}
-
-// IsExpired returns true if the token's expiration time has been reached.
-// Compares ExpiresIn with current time (stub for now).
-// Per RFC 8693, a token is expired when ExpiresIn seconds have passed.
-// Note: This is a simple check - real implementations should compare with current time.
+// IsExpired reports a known exhausted lifetime, not an unknown expiry.
 func (resp *TokenExchangeResponse) IsExpired() bool {
-	// ExpiresIn == 0 means token doesn't expire or expiration not specified
-	return resp.ExpiresIn < 0
+	return resp.ExpiresIn != nil && *resp.ExpiresIn <= 0
 }
 
 // HasRefreshToken returns true if a refresh token is available.
@@ -217,10 +183,10 @@ func (resp *TokenExchangeResponse) HasScope() bool {
 }
 
 // GetExpirationSeconds returns the token expiration time in seconds.
-// Returns 0 if token doesn't expire.
+// Returns 0 if the lifetime is unknown or exhausted.
 func (resp *TokenExchangeResponse) GetExpirationSeconds() int64 {
-	if resp.ExpiresIn < 0 {
+	if resp.ExpiresIn == nil || *resp.ExpiresIn < 0 {
 		return 0
 	}
-	return resp.ExpiresIn
+	return *resp.ExpiresIn
 }

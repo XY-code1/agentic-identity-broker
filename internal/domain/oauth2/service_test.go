@@ -640,6 +640,7 @@ func TestService_HandleAuthorization_SessionExpiry(t *testing.T) {
 						ServiceID:             serviceID,
 						TokenType:             "Bearer",
 						RefreshTokenExpiresAt: &expiredAt,
+						AccessTokenExpiresAt:  &expiredAt,
 					}, nil
 				}
 			},
@@ -1462,6 +1463,7 @@ func TestService_HandleAuthorization_MandatoryRequirements(t *testing.T) {
 						ServiceID:             serviceID,
 						Scope:                 []string{"repo", "user:email"},
 						RefreshTokenExpiresAt: &expiredAt,
+						AccessTokenExpiresAt:  &expiredAt,
 					}, nil
 				}
 			},

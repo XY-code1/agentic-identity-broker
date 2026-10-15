@@ -31,6 +31,10 @@ type OAuth2StateTokenClaims struct {
 	// ConsentStateID is the optional current-tab selection reference.
 	ConsentStateID string `json:"consent_state_id,omitempty"`
 
+	// SessionID and SessionCallbackID identify the connection observed at authorization.
+	SessionID         id.SessionID `json:"session_id,omitempty"`
+	SessionCallbackID string       `json:"session_callback_id,omitempty"`
+
 	// IssuedAt is when the token was created.
 	IssuedAt time.Time `json:"iat"`
 

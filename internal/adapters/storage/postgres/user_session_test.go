@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/testutil"
+	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -179,6 +181,7 @@ func TestUserSessionRepository(t *testing.T) {
 			}
 			if serviceID == expiredServiceID {
 				session.RefreshTokenExpiresAt = &past
+				session.AccessTokenExpiresAt = &past
 			}
 			require.NoError(t, repo.Create(ctx, session))
 		}
@@ -197,6 +200,63 @@ func TestUserSessionRepository(t *testing.T) {
 		assert.False(t, byService[activeServiceID].IsExpired)
 		assert.True(t, byService[expiredServiceID].IsExpired)
 	})
+}
+
+func TestUserSessionRepository_Usability(t *testing.T) {
+	adapter, cleanup := setupUserSessionTestDB(t)
+	defer cleanup()
+	repo := NewUserSessionRepository(adapter)
+	ctx := context.Background()
+	principal := id.Principal("usability@example.com")
+	past, future := time.Now().Add(-time.Hour), time.Now().Add(time.Hour)
+	var wantActive []id.ServiceID
+	wantExpired := map[id.ServiceID]bool{}
+	for _, tc := range []struct {
+		accessExpiry  *time.Time
+		refreshExpiry *time.Time
+		refresh       []byte
+		expired       bool
+	}{
+		{accessExpiry: &past, expired: true},
+		{accessExpiry: &future},
+		{accessExpiry: &past, refresh: []byte("refresh")},
+		{accessExpiry: &past, refresh: []byte("refresh"), refreshExpiry: &future},
+		{accessExpiry: &past, refresh: []byte("refresh"), refreshExpiry: &past, expired: true},
+		{accessExpiry: &future, refresh: []byte("refresh"), refreshExpiry: &past},
+		{},
+	} {
+		serviceID := id.NewServiceID()
+		insertTestService(t, adapter, serviceID)
+		now := time.Now()
+		session := &storage.UserSession{
+			ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID,
+			EncryptedAccessToken: []byte("access"), EncryptedRefreshToken: tc.refresh, TokenType: "Bearer",
+			AccessTokenExpiresAt: tc.accessExpiry, RefreshTokenExpiresAt: tc.refreshExpiry,
+			Scope: []string{}, EncryptionContext: storage.EncryptionContext{ServiceID: serviceID},
+			InitiatedAt: now, CreatedAt: now, UpdatedAt: now,
+		}
+		require.NoError(t, repo.Create(ctx, session))
+		wantExpired[serviceID] = tc.expired
+		if !tc.expired {
+			wantActive = append(wantActive, serviceID)
+		}
+	}
+	ids, err := repo.ListActiveServiceIDsByPrincipal(ctx, principal)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, wantActive, ids)
+	active, err := repo.ListActiveByPrincipal(ctx, principal)
+	require.NoError(t, err)
+	var activeIDs []id.ServiceID
+	for _, session := range active {
+		activeIDs = append(activeIDs, session.ServiceID)
+	}
+	assert.ElementsMatch(t, wantActive, activeIDs)
+	summaries, err := repo.ListSummariesByPrincipal(ctx, principal)
+	require.NoError(t, err)
+	require.Len(t, summaries, len(wantExpired))
+	for _, summary := range summaries {
+		assert.Equal(t, wantExpired[summary.ServiceID], summary.IsExpired, summary.ServiceID)
+	}
 }
 
 func TestUserSessionRefreshLocksAcrossRepositories(t *testing.T) {
@@ -291,6 +351,104 @@ func TestUserSessionRefreshLocksAcrossRepositories(t *testing.T) {
 	persisted, err = secondRepo.FindByPrincipalAndService(ctx, principal, serviceID)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("new-refresh"), persisted.EncryptedRefreshToken)
+}
+
+func TestUserSessionRefreshReservesConnectionsAcrossRepositories(t *testing.T) {
+	adapter, cleanup := setupUserSessionTestDB(t)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	serviceID := id.NewServiceID()
+	insertTestService(t, adapter, serviceID)
+	expired := time.Now().Add(-time.Hour)
+	sessions := make([]*storage.UserSession, 21)
+	for i := range sessions {
+		sessions[i] = seedExpiryTestSession(t, adapter, serviceID, expiryTestID(i+1), &expired)
+	}
+	repos := []*PostgresUserSessionRepository{NewUserSessionRepository(adapter), NewUserSessionRepository(adapter)}
+	entered := make(chan struct{}, 20)
+	done := make(chan error, 20)
+	proceed := make(chan struct{})
+	release := sync.OnceFunc(func() { close(proceed) })
+	defer release()
+	for i, session := range sessions[:20] {
+		repo := repos[i%len(repos)]
+		go func() {
+			_, err := repo.WithLockedSession(ctx, session.Principal, serviceID, func(ctx context.Context, _ *storage.UserSession) (bool, error) {
+				entered <- struct{}{}
+				select {
+				case <-proceed:
+					return false, nil
+				case <-ctx.Done():
+					return false, ctx.Err()
+				}
+			})
+			done <- err
+		}()
+	}
+	for range 20 {
+		select {
+		case <-entered:
+		case <-ctx.Done():
+			t.Fatal("refreshes did not acquire their session locks")
+		}
+	}
+
+	waiting := sessions[20]
+	for _, tc := range []struct {
+		name          string
+		callerTimeout time.Duration
+		writeTimeout  time.Duration
+	}{
+		{name: "caller deadline", callerTimeout: 100 * time.Millisecond, writeTimeout: time.Second},
+		{name: "storage acquisition timeout", callerTimeout: time.Second, writeTimeout: 100 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			originalTimeout := adapter.timeouts.Write
+			adapter.timeouts.Write = tc.writeTimeout
+			defer func() { adapter.timeouts.Write = originalTimeout }()
+			waitingCtx, cancelWaiting := context.WithTimeout(ctx, tc.callerTimeout)
+			defer cancelWaiting()
+			called := false
+			_, err := repos[1].WithLockedSession(waitingCtx, waiting.Principal, serviceID, func(context.Context, *storage.UserSession) (bool, error) {
+				called = true
+				return false, nil
+			})
+			assert.ErrorIs(t, err, context.DeadlineExceeded)
+			assert.False(t, called, "excess refreshes must wait before acquiring a connection")
+			assert.Equal(t, 20, adapter.db.Stats().InUse)
+			connections := make([]*sqlx.Conn, 0, 5)
+			defer func() {
+				for _, conn := range connections {
+					require.NoError(t, conn.Close())
+				}
+			}()
+			for range 5 {
+				readCtx, cancelRead := context.WithTimeout(ctx, time.Second)
+				conn, err := adapter.db.Connx(readCtx)
+				cancelRead()
+				require.NoError(t, err, "refresh contention must leave five connections available")
+				connections = append(connections, conn)
+				var value int
+				require.NoError(t, conn.GetContext(ctx, &value, "SELECT 1"))
+				assert.Equal(t, 1, value)
+			}
+		})
+	}
+
+	release()
+	for range 20 {
+		require.NoError(t, <-done)
+	}
+	_, err := repos[0].WithLockedSession(ctx, waiting.Principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+		current.EncryptedRefreshToken = []byte("rotated-refresh")
+		return true, nil
+	})
+	require.NoError(t, err)
+	persisted, err := repos[1].FindByPrincipalAndService(ctx, waiting.Principal, serviceID)
+	require.NoError(t, err)
+	require.NotNil(t, persisted)
+	assert.Equal(t, []byte("rotated-refresh"), persisted.EncryptedRefreshToken)
 }
 
 func TestUserSessionRefreshDoesNotWaitForProviderConnectionInsideTransaction(t *testing.T) {

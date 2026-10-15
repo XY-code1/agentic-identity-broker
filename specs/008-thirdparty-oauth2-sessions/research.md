@@ -368,8 +368,8 @@ CREATE INDEX idx_user_sessions_service_id ON user_sessions(service_id);
 
 ### Rationale for Unique Constraint
 - **One session per user per service**: Prevents token duplication and race conditions
-- **Upsert semantics**: If user re-authenticates, new tokens replace old tokens
-- **Race condition handling**: First callback wins; subsequent callbacks see constraint violation
+- **Reconnect semantics**: Authorization state captures the existing session ID and callback generation. A callback replaces tokens only if that baseline still matches under the refresh lock; successful replacement advances the generation.
+- **Race condition handling**: Initial callbacks insert without overwriting the unique (principal, service_id) row. Competing initial or reconnect callbacks return the winning session unchanged. Refresh preserves the callback generation.
 
 ### ON DELETE RESTRICT Rationale
 - **Prevents orphaned sessions**: Cannot delete service with active sessions

@@ -317,9 +317,9 @@ func TestRefreshAccessToken_ConfidentialClientPreservesRequestBody(t *testing.T)
 	assert.Zero(t, assertionSignerCallCount(signer), "static confidential refresh behavior must not invoke the CIMD signer")
 }
 
-// T057: CIMD refreshes authenticate every request with one newly signed JWT-bearer assertion.
 func TestRefreshAccessToken_CIMDClientUsesFreshAssertionForEachRequest(t *testing.T) {
-	service, _, _ := setupService(t)
+	var logs strings.Builder
+	service, _ := newSecurityTestOAuth2SessionService(t, slog.New(slog.NewJSONHandler(&logs, nil)), 3)
 	signer := &cimdAssertionSignerSpy{}
 	service = service.WithCIMDAssertionSigner(signer)
 	serviceID := id.NewServiceID()
@@ -336,16 +336,24 @@ func TestRefreshAccessToken_CIMDClientUsesFreshAssertionForEachRequest(t *testin
 			err:    errorsJoin(readErr, parseErr),
 		})
 		w.Header().Set("Content-Type", "application/json")
+		if len(requests) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprint(w, `{"error":"temporarily_unavailable"}`)
+			return
+		}
+		if form.Get("client_assertion") == requests[0].body.Get("client_assertion") {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = fmt.Fprint(w, `{"error":"invalid_client"}`)
+			return
+		}
 		_, _ = fmt.Fprint(w, `{"access_token":"token","token_type":"Bearer","expires_in":3600}`)
 	}))
 	defer tokenEndpoint.Close()
 
 	provider := createCIMDTestProvider(serviceID, tokenEndpoint.URL)
 	provider.ClientID = id.ClientID(cimdClientIDForService(serviceID))
-	for range 2 {
-		_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
-		require.NoError(t, err)
-	}
+	_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+	require.NoError(t, err)
 
 	require.Len(t, requests, 2)
 	for _, request := range requests {
@@ -361,10 +369,7 @@ func TestRefreshAccessToken_CIMDClientUsesFreshAssertionForEachRequest(t *testin
 		assert.Empty(t, request.query)
 	}
 
-	assert.Len(t, map[string]struct{}{
-		requests[0].body.Get("client_assertion"): {},
-		requests[1].body.Get("client_assertion"): {},
-	}, 2, "each refresh request must carry a freshly signed assertion")
+	assert.NotEqual(t, requests[0].body.Get("client_assertion"), requests[1].body.Get("client_assertion"), "retry must carry a fresh assertion")
 
 	signedRequests := signer.Requests()
 	require.Len(t, signedRequests, 2)
@@ -372,6 +377,8 @@ func TestRefreshAccessToken_CIMDClientUsesFreshAssertionForEachRequest(t *testin
 		assert.Equal(t, id.ClientID(cimdClientIDForService(serviceID)), signedRequest.clientID)
 		assert.Equal(t, tokenEndpoint.URL, signedRequest.tokenEndpoint)
 	}
+	assertCIMDTokenAcquisitionAudit(t, logs.String(), serviceID, "refresh", "success")
+	assert.Equal(t, 1, strings.Count(logs.String(), `"msg":"CIMD client token acquisition"`))
 }
 
 // T057: A missing or rejected CIMD signer must prevent refresh token-endpoint traffic.
@@ -1521,6 +1528,7 @@ func TestListUserSessions_BatchesProvidersAndPreservesExpiredSessions(t *testing
 			ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID,
 			EncryptedAccessToken: []byte("ciphertext"), EncryptedRefreshToken: []byte("refresh"),
 			TokenType: "Bearer", Scope: []string{"read"}, RefreshTokenExpiresAt: &past,
+			AccessTokenExpiresAt: &past,
 		}))
 	}
 	svc := oauth2session.NewOAuth2SessionService(providerService, sessions, sessions,
@@ -1551,6 +1559,15 @@ func setupServiceWithConfig(
 	configure func(*oauth2session.Config),
 ) (*oauth2session.OAuth2SessionService, *memory.InMemoryThirdpartyOAuth2ProviderRepository, ports.UserSessionRepository, *memory.UserGrantRepository, *memory.AgentRepository, *thirdparty.ThirdpartyOAuth2ProviderService) {
 	t.Helper()
+	return setupServiceWithHTTPClient(t, configure, &http.Client{})
+}
+
+func setupServiceWithHTTPClient(
+	t *testing.T,
+	configure func(*oauth2session.Config),
+	httpClient *http.Client,
+) (*oauth2session.OAuth2SessionService, *memory.InMemoryThirdpartyOAuth2ProviderRepository, ports.UserSessionRepository, *memory.UserGrantRepository, *memory.AgentRepository, *thirdparty.ThirdpartyOAuth2ProviderService) {
+	t.Helper()
 
 	// Create test JWE key
 	key, err := jwk.Import[jwk.Key]([]byte("test-secret-key-must-be-32-bytes"))
@@ -1569,6 +1586,7 @@ func setupServiceWithConfig(
 	// Create service
 	config := oauth2session.DefaultConfig()
 	config.CallbackBaseURL = "https://broker.example.com"
+	config.RetryBaseDelay = time.Millisecond
 	if configure != nil {
 		configure(&config)
 	}
@@ -1593,7 +1611,7 @@ func setupServiceWithConfig(
 		grantRepo,
 		agentRepo,
 		encryption,
-		&http.Client{},
+		httpClient,
 		domjwe.New(key),
 		config,
 		slog.Default(),
