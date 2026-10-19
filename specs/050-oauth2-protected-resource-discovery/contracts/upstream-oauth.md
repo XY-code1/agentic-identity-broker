@@ -121,7 +121,7 @@ A successful response is `201` with JSON.
 | Response member | Rule |
 |---|---|
 | `client_id` | Required and non-empty. |
-| `token_endpoint_auth_method` | If present, identical to the requested method. |
+| `token_endpoint_auth_method` | Required and identical to the requested method. A missing or different value fails with `client_registration_invalid`; do not retry another client method. |
 | `client_secret` | Required for `client_secret_basic` and `client_secret_post`. Must be absent or empty for `none`. |
 | `redirect_uris` | If present, must contain the exact broker callback. |
 | `grant_types` | If present, must contain `authorization_code`. A missing `refresh_token` grant is permitted, but renewal requires a provider-issued refresh token. |

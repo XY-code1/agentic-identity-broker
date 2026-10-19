@@ -301,7 +301,7 @@ Discovery error messages, `failure_reason` values, and audit records use only th
 | `no_compatible_client_method` | No compatible CIMD or DCR method exists. |
 | `cimd_unavailable` | The selected hosted CIMD identity or signing key is not usable. |
 | `client_registration_rejected` | The selected DCR registration returned an error. |
-| `client_registration_invalid` | DCR returned an empty ID, incompatible callback, missing secret, another method, or a non-zero `client_secret_expires_at`. |
+| `client_registration_invalid` | DCR returned an empty ID, incompatible callback, missing secret, a missing or different `token_endpoint_auth_method`, or a non-zero `client_secret_expires_at`. |
 | `client_method_changed` | An update would change `discovery.client_method` or the exact `token_endpoint_auth_method`, including confidential/public mode. |
 | `duplicate_client_identity` | The DCR client ID already exists for the same issuer. |
 
