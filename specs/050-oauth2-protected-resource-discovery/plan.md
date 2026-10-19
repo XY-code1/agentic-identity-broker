@@ -37,9 +37,9 @@ The design keeps the existing `ThirdpartyOAuth2ProviderEntity` aggregate. It add
 - No response, status record, or audit record contains a secret, assertion, token, code, URL query, or remote body.
 - Existing manual and direct-metadata services keep their current validation and wire behavior.
 
-**Scale/Scope**: One existing aggregate, 44 mapped functional acceptance scenarios (US1: 10, US2: 10, US3: 13, US4: 11), one Admin API route, one reversible migration, one proposed ADR, and one separate performance measurement. No scheduled discovery or UI.
+**Scale/Scope**: One existing aggregate, 44 mapped functional acceptance scenarios (US1: 10, US2: 10, US3: 13, US4: 11), one Admin API route, one reversible migration, one accepted ADR, and one separate performance measurement. No scheduled discovery or UI.
 
-**NEEDS CLARIFICATION**: None. [research.md](./research.md) resolves the technical questions. The stakeholder approved the canonical OpenAPI delta and ADR 040's approach. ADR 040 remains proposed pending reviewer acceptance; ADRs 015 and 036 remain binding meanwhile.
+**NEEDS CLARIFICATION**: None. [research.md](./research.md) resolves the technical questions. The stakeholder approved the canonical OpenAPI delta and ADR 040's approach on 2026-10-07 and accepted ADR 040 on 2026-10-19.
 
 ## Constitution Check
 
@@ -323,7 +323,7 @@ Add `GetDiscoveryStatus` to `ServicesHandler`. Mount `GET /api/services/{service
 
 ### Phase N: Constitution Compliance Verification
 
-- Verify the proposed ADR 040, OpenAPI, glossary, SC-006 and security NFRs in `ARCHITECTURE.md`, migration tests, audit safety, Builder wiring, the focused status writer in `internal/ports/storage.go`, and both storage adapters.
+- Verify the accepted ADR 040, OpenAPI, glossary, SC-006 and security NFRs in `ARCHITECTURE.md`, migration tests, audit safety, Builder wiring, the focused status writer in `internal/ports/storage.go`, and both storage adapters.
 - Run `just check`, the focused E2E command, `just test`, `just test-integration`, and `just test-integration-infra`.
 - Run `just verify` as the final gate.
 

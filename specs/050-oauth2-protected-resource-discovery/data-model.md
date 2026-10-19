@@ -118,7 +118,7 @@ An issuer or effective-audience change checks for all user sessions before netwo
 
 ## Persistence design
 
-Migration `039_add_protected_resource_discovery.{up,down}.sql` extends `thirdparty_oauth2_services` after existing versions 036–038. These SQL predicates follow [proposed ADR 040](../../adrs/040-protected-resource-discovery-and-dcr.md), subject to reviewer acceptance. The existing `authorization_params` JSONB column stores the effective resource.
+Migration `039_add_protected_resource_discovery.{up,down}.sql` extends `thirdparty_oauth2_services` after existing versions 036–038. These SQL predicates follow [ADR 040](../../adrs/040-protected-resource-discovery-and-dcr.md). The existing `authorization_params` JSONB column stores the effective resource.
 
 ```sql
 ALTER TABLE thirdparty_oauth2_services

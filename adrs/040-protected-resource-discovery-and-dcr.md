@@ -1,8 +1,8 @@
 # ADR 040: Protected Resource Discovery and Dynamic Client Registration
 
-**Status**: Proposed
+**Status**: Accepted
 **Date**: 2026-10-07
-**Stakeholder approval**: The stakeholder approved the API and implementation approach on 2026-10-07, including the optional broker-wide DCR client name and Helm mapping. Reviewer acceptance of this ADR remains outstanding.
+**Acceptance**: The stakeholder accepted ADR 040 on 2026-10-19 in the PR #191 review. The stakeholder approved the API and implementation approach on 2026-10-07, including the optional broker-wide DCR client name and Helm mapping.
 **Numbering**: The stakeholder approved this proposal when it was ADR 038. This branch renumbered it to ADR 040 on 2026-10-15 because main assigned ADR 038 to proactive token refresh. The decision did not change.
 
 ## Context
@@ -17,7 +17,7 @@ ADR 015 locates the CIMD fetcher in `internal/adapters/cimd` and its address pol
 
 `ThirdpartyOAuth2ProviderService` owns discovery for the existing service aggregate. It validates the source, metadata identities, issuer selection, client method, effective resource, credential encryption, and state changes. The narrow `OAuthDiscoveryClient` port handles the resource probe, bounded metadata reads, and registration. The outbound HTTP adapter performs remote I/O. The Admin handler parses requests and formats safe results. Builder supplies the port. Direct `metadata_url` names an administrator-selected authorization-server metadata endpoint. It retains its older transport and metadata fallback behavior. Resource discovery instead follows remote-advertised metadata and issuer URLs through the guarded outbound client. Manual services keep their existing behavior.
 
-Move the shared blocked-address value object to `internal/domain/netpolicy`. Move the CIMD fetcher to `internal/adapters/outboundhttp` and share its dial-time address guard with protected-resource discovery and registration. If reviewers accept this proposal, the location change supersedes only ADR 015's package locations. ADR 015's CIMD timeout, response limit, cache, and validation rules remain binding. Do not make an adapter import another adapter.
+Move the shared blocked-address value object to `internal/domain/netpolicy`. Move the CIMD fetcher to `internal/adapters/outboundhttp` and share its dial-time address guard with protected-resource discovery and registration. The location change supersedes only ADR 015's package locations. ADR 015's CIMD timeout, response limit, cache, and validation rules remain binding. Do not make an adapter import another adapter.
 
 The guarded transport validates public HTTPS URLs and blocks private resolved addresses before TCP connect. It disables redirects and proxy routing so its dialer checks the destination rather than a proxy. Discovery and registration share one 15-second attempt deadline. Each remote response has a 256-KiB limit. Discovery-backed code exchange and refresh use the guarded transport with the configured token timeout and token response limits. Direct `metadata_url` and manual traffic retain the older shared client, its transport policy, and its fallback behavior. This older client is not the guarded discovery client.
 
@@ -29,7 +29,7 @@ For DCR, send the deployment-wide `third_party_oauth2.client_name` as `client_na
 
 Accept a DCR response only if its client ID, callback, authentication method, credential, and secret expiry meet the selected method's rules. Reject every non-zero `client_secret_expires_at`. Discard registration-management credentials. Store a confidential DCR secret with the existing service-scoped encryption port and exactly one `service_id` encryption-context subject. A public DCR client stores no secret. DCR client identity is `(issuer_uri, client_id)`; keep the existing manual-client uniqueness rule.
 
-Extend the stored `TokenEndpointAuthMethod` with `client_secret_basic` and `client_secret_post` **only for discovery-backed DCR clients**. Pin the selected method for code exchange and refresh. If reviewers accept this proposal, this extension supersedes ADR 036 decision 2 for those clients only. Manual confidential clients retain automatic authentication-style detection. Manual public and hosted CIMD clients retain their existing explicit methods. All other ADR 036 decisions remain binding.
+Extend the stored `TokenEndpointAuthMethod` with `client_secret_basic` and `client_secret_post` **only for discovery-backed DCR clients**. Pin the selected method for code exchange and refresh. This extension supersedes ADR 036 decision 2 for those clients only. Manual confidential clients retain automatic authentication-style detection. Manual public and hosted CIMD clients retain their existing explicit methods. All other ADR 036 decisions remain binding.
 
 Persist one effective RFC 8707 `authorization_params.resource` and whether the administrator pinned it or discovery derived it from the verified resource URL. Return `discovery.authorization_param_resource_strategy` as `pinned`, `derived`, or `null` for services without resource discovery. Send the effective audience exactly once on authorization, code exchange, and refresh. Never retry without it. A discovery-backed token endpoint cannot contain a `resource` query parameter.
 
