@@ -174,25 +174,34 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 		return nil, r.wrapError(err, "Create")
 	}
 	if rows == 0 {
+		operation := "CreateIfAbsent"
 		if replace {
-			return nil, storage.NewStorageError("Create", storage.ErrorKindConflict, nil, "service issuer, audience, or source changed")
+			operation = "Create"
 		}
-		// DO NOTHING and a provider mismatch both affect zero rows. Verify the
-		// issuer and effective audience before returning an existing session.
-		var providerMatches bool
+		// INSERT ... SELECT inserts nothing for a missing service, a stale provider
+		// expectation, or (without replace) an existing session.
+		var probe struct {
+			ServiceExists   bool `db:"service_exists"`
+			ProviderMatches bool `db:"provider_matches"`
+		}
 		readCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
-		err = r.adapter.db.GetContext(readCtx, &providerMatches, `SELECT EXISTS (
-			SELECT 1 FROM thirdparty_oauth2_services
-			WHERE id = $1 AND ((resource_url IS NULL AND $2::text = '' AND $3::text = '')
-				OR (resource_url IS NOT NULL AND $2::text <> '' AND $3::text <> ''
-					AND issuer_uri = $2::text AND authorization_params ->> 'resource' = $3::text))
-		)`, session.ServiceID, session.ExpectedIssuerURI, session.ExpectedResource)
+		err = r.adapter.db.GetContext(readCtx, &probe, `SELECT
+			EXISTS (SELECT 1 FROM thirdparty_oauth2_services WHERE id = $1) AS service_exists,
+			EXISTS (
+				SELECT 1 FROM thirdparty_oauth2_services
+				WHERE id = $1 AND ((resource_url IS NULL AND $2::text = '' AND $3::text = '')
+					OR (resource_url IS NOT NULL AND $2::text <> '' AND $3::text <> ''
+						AND issuer_uri = $2::text AND authorization_params ->> 'resource' = $3::text))
+			) AS provider_matches`, session.ServiceID, session.ExpectedIssuerURI, session.ExpectedResource)
 		cancel()
 		if err != nil {
-			return nil, r.wrapError(err, "CreateIfAbsent")
+			return nil, r.wrapError(err, operation)
 		}
-		if !providerMatches {
-			return nil, storage.NewStorageError("CreateIfAbsent", storage.ErrorKindConflict, nil, "service issuer, audience, or source changed")
+		if !probe.ServiceExists {
+			return nil, storage.NewStorageError(operation, storage.ErrorKindNotFound, nil, "service not found")
+		}
+		if replace || !probe.ProviderMatches {
+			return nil, storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "service issuer, audience, or source changed")
 		}
 		winner, err := r.FindByPrincipalAndService(ctx, session.Principal, session.ServiceID)
 		if err != nil {

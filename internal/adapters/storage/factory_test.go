@@ -29,6 +29,41 @@ func TestNewAdapter_Memory(t *testing.T) {
 	assert.NotNil(t, adapter.Users())
 }
 
+func TestMemoryAdapter_MissingServiceSessionIsNotFound(t *testing.T) {
+	adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"})
+	require.NoError(t, err)
+	repo := adapter.UserSessions()
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		create func(context.Context, *domainstorage.UserSession) error
+	}{
+		{"Create", repo.Create},
+		{"CreateIfAbsent", func(ctx context.Context, session *domainstorage.UserSession) error {
+			_, err := repo.CreateIfAbsent(ctx, session)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			serviceID := id.NewServiceID()
+			now := time.Now().UTC()
+			session := &domainstorage.UserSession{
+				ID: id.NewSessionID(), Principal: id.Principal("missing-service@example.com"), ServiceID: serviceID,
+				EncryptedAccessToken: []byte("encrypted-token"), TokenType: "Bearer", Scope: []string{"read"},
+				EncryptionContext: domainstorage.EncryptionContext{ServiceID: serviceID},
+				InitiatedAt:       now, CreatedAt: now, UpdatedAt: now,
+			}
+			err := tc.create(ctx, session)
+			var storageErr *domainstorage.StorageError
+			require.ErrorAs(t, err, &storageErr)
+			assert.Equal(t, domainstorage.ErrorKindNotFound, storageErr.Kind)
+			count, err := repo.CountByService(ctx, serviceID)
+			require.NoError(t, err)
+			assert.Zero(t, count)
+		})
+	}
+}
+
 func TestNewAdapter_MemoryExposesSigningKeyBootstrapCoordinator(t *testing.T) {
 	config := &ports.StorageConfig{
 		Backend: "memory",

@@ -228,13 +228,15 @@ type UserSessionRepository interface {
 	// Create creates a new user session.
 	// Uses upsert semantics: if session exists for (principal, service_id), replaces tokens.
 	// Returns error if:
-	// - Service ID doesn't exist (StorageError with Kind=NotFound via FK constraint)
+	// - Service ID doesn't exist (StorageError with Kind=NotFound)
+	// - The service's issuer, audience, or discovery source no longer matches the session's expected values (StorageError with Kind=Conflict)
 	// - Storage connection fails (StorageError with Kind=Connection)
 	// - Operation timeout (StorageError with Kind=Timeout)
 	Create(ctx context.Context, session *storage.UserSession) error
 
 	// CreateIfAbsent inserts a first connection without replacing a competing callback's session.
 	// Returns the inserted session or the existing winner.
+	// It returns the same NotFound and Conflict errors as Create.
 	CreateIfAbsent(ctx context.Context, session *storage.UserSession) (*storage.UserSession, error)
 
 	// Get retrieves a session by ID.

@@ -58,8 +58,12 @@ func (r *InMemoryUserSessionRepository) create(ctx context.Context, session *sto
 		r.issuerSessionGate.RLock()
 		defer r.issuerSessionGate.RUnlock()
 	}
-	if !r.matchesCurrentDiscoveryState(session) {
-		return nil, storage.NewStorageError("Create", storage.ErrorKindConflict, nil, "provider issuer or audience is no longer current")
+	operation := "CreateIfAbsent"
+	if replace {
+		operation = "Create"
+	}
+	if err := r.currentDiscoveryStateError(session, operation); err != nil {
+		return nil, err
 	}
 
 	key := principalServiceKey(session.Principal, session.ServiceID)
@@ -89,23 +93,28 @@ func (r *InMemoryUserSessionRepository) create(ctx context.Context, session *sto
 	return session, nil
 }
 
-func (r *InMemoryUserSessionRepository) matchesCurrentDiscoveryState(session *storage.UserSession) bool {
-	if r.provider == nil {
-		return session.ExpectedIssuerURI == "" && session.ExpectedResource == ""
+// currentDiscoveryStateError mirrors the PostgreSQL insert guard: a missing service is
+// NotFound and stale issuer or audience expectations conflict. Without a bound provider
+// repository (standalone tests) it cannot see services and checks only the expectations.
+func (r *InMemoryUserSessionRepository) currentDiscoveryStateError(session *storage.UserSession, operation string) error {
+	matches := session.ExpectedIssuerURI == "" && session.ExpectedResource == ""
+	if r.provider != nil {
+		r.provider.mu.RLock()
+		current := r.provider.providers[session.ServiceID]
+		if current != nil && current.entity.Discovery.ResourceURL != nil {
+			matches = session.ExpectedIssuerURI != "" && session.ExpectedResource != "" &&
+				session.ExpectedIssuerURI == current.entity.IssuerURI &&
+				session.ExpectedResource == current.entity.AuthorizationParams["resource"]
+		}
+		r.provider.mu.RUnlock()
+		if current == nil {
+			return storage.NewStorageError(operation, storage.ErrorKindNotFound, nil, "service not found")
+		}
 	}
-	r.provider.mu.RLock()
-	defer r.provider.mu.RUnlock()
-
-	current := r.provider.providers[session.ServiceID]
-	if current == nil {
-		return false
+	if !matches {
+		return storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "provider issuer or audience is no longer current")
 	}
-	if current.entity.Discovery.ResourceURL != nil {
-		return session.ExpectedIssuerURI != "" && session.ExpectedResource != "" &&
-			session.ExpectedIssuerURI == current.entity.IssuerURI &&
-			session.ExpectedResource == current.entity.AuthorizationParams["resource"]
-	}
-	return session.ExpectedIssuerURI == "" && session.ExpectedResource == ""
+	return nil
 }
 
 // Get retrieves a session by ID.
