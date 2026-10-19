@@ -55,6 +55,7 @@ function validateResult(result) {
 function parseResult(comment) {
   if (comment.user?.login !== "github-actions[bot]" || comment.user?.type !== "Bot" ||
       !/gh-aw-workflow-id: speckit-(phase|plan|analyze|implement)\b/.test(comment.body || "")) return null;
+  if (comment.body.split(marker).length !== 2) return null;
   const match = comment.body.match(/<!-- speckit-result -->\s*```json\s*\n([\s\S]*?)\n```/);
   if (!match) return null;
   return validateResult(JSON.parse(match[1]));
@@ -269,6 +270,7 @@ function writeResult() {
     answer_id: context.answer?.id || context.previous?.answer_id || 0,
   });
   if (typeof draft.report !== "string" || !draft.report.trim()) throw new Error("A phase report is required");
+  if (draft.report.includes(marker)) throw new Error("A phase report must not contain a result marker");
   fs.writeFileSync(`${directory}/comment.md`,
     `${draft.report}\n\n${marker}\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\`\n`);
 }
