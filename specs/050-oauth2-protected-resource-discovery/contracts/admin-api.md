@@ -248,6 +248,8 @@ On failure, `resource_url`, `issuer_uri`, and `client_method` describe the activ
 
 Extend `ErrorResponse` with optional `authorization_servers`. `error` remains required and `message` remains optional. Its error categories remain unchanged.
 
+`error` names the category. When `message` is a code, it is one of the section 4.1 failure codes. A failed discovery-backed update also stores that code as the status `failure_reason`, and audit records use it as `failure_code`. Field-level validation text, precondition text, and the omitted `500` message are not failure codes.
+
 | Condition | Status | `error` | `message` |
 |---|---|---|---|
 | Invalid or conflicting request fields | `400` | `validation failed` | Existing field-level text. |
@@ -304,6 +306,8 @@ Discovery error messages, `failure_reason` values, and audit records use only th
 | `client_registration_invalid` | DCR returned an empty ID, incompatible callback, missing secret, a missing or different `token_endpoint_auth_method`, or a non-zero `client_secret_expires_at`. |
 | `client_method_changed` | An update would change `discovery.client_method` or the exact `token_endpoint_auth_method`, including confidential/public mode. |
 | `duplicate_client_identity` | The DCR client ID already exists for the same issuer. |
+| `issuer_change_requires_no_sessions` | An explicit issuer change has user sessions; status records this safe failure. |
+| `internal_failure` | Audit only. A local storage, encryption, or branch-key failure ended the attempt. It never appears in `message` or `failure_reason`. |
 
 No response includes a provider response body, URL query, secret, assertion, code, or token.
 
