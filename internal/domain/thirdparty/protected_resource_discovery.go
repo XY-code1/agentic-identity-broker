@@ -555,10 +555,7 @@ func validateRegistrationResponse(body []byte, callback string, method model.Tok
 		return invalid()
 	}
 	var returnedMethod model.TokenEndpointAuthMethod
-	if _, err := decodeRegistrationMember(document, "token_endpoint_auth_method", &returnedMethod); err != nil {
-		return invalid()
-	}
-	if _, present := document["token_endpoint_auth_method"]; present && returnedMethod != method {
+	if present, err := decodeRegistrationMember(document, "token_endpoint_auth_method", &returnedMethod); err != nil || !present || returnedMethod != method {
 		return invalid()
 	}
 	var redirects []string

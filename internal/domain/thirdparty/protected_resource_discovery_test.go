@@ -686,6 +686,7 @@ func TestProtectedResourceDiscovery_DCRRejectsIncompatibleResponseWithoutRetryOr
 			response["redirect_uris"] = []string{"https://attacker.example.test/callback"}
 		}},
 		{"wrong authentication method", func(response map[string]any) { response["token_endpoint_auth_method"] = "none" }},
+		{"omitted authentication method", func(response map[string]any) { delete(response, "token_endpoint_auth_method") }},
 		{"missing confidential secret", func(response map[string]any) { delete(response, "client_secret") }},
 		{"expired secret", func(response map[string]any) { response["client_secret_expires_at"] = int64(1) }},
 		{"future-expiring secret", func(response map[string]any) { response["client_secret_expires_at"] = int64(4102444800) }},
@@ -701,6 +702,30 @@ func TestProtectedResourceDiscovery_DCRRejectsIncompatibleResponseWithoutRetryOr
 			}
 			stored, err := runDCRCreate(client, entity, "Example Platform")
 			assert.Equal(t, []string{"probe " + discoveryResource, "get " + discoveryResourcePath, "get " + discoveryIssuerOAuth, "post " + discoveryIssuer + "/register"}, client.calls, "rejected confidential registration must not retry public DCR")
+			require.ErrorContains(t, err, "client_registration_invalid")
+			assert.Nil(t, stored)
+		})
+	}
+}
+
+func TestProtectedResourceDiscovery_PublicDCRRequiresExplicitNoneMethod(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(map[string]any)
+	}{
+		{"omitted method", func(response map[string]any) { delete(response, "token_endpoint_auth_method") }},
+		{"confidential method", func(response map[string]any) { response["token_endpoint_auth_method"] = "client_secret_basic" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entity := discoveredProvider(discoveryResource, "")
+			client := dcrDiscoveryClient(issuerDCRDocument([]string{"none"}, []string{"S256"}))
+			client.postFn = func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				response := dcrResponse(dcrCallback(entity.ID), model.TokenEndpointAuthMethodNone, "")
+				tc.change(response)
+				return dcrJSON(response), nil
+			}
+			stored, err := runDCRCreate(client, entity, "Example Platform")
+			assert.Equal(t, []string{"probe " + discoveryResource, "get " + discoveryResourcePath, "get " + discoveryIssuerOAuth, "post " + discoveryIssuer + "/register"}, client.calls)
 			require.ErrorContains(t, err, "client_registration_invalid")
 			assert.Nil(t, stored)
 		})

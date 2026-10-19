@@ -261,6 +261,7 @@ The 2026-10-07 red/green evidence refers to this feature's original migration 03
 - [X] T113 [US3] Reuse public HTTPS URL validation for discovery and discovered token endpoints. Reject case-insensitive `resource` parameter collisions in requests and issuer metadata before remote registration; leave direct `metadata_url` and manual flows unchanged.
 - [X] T114 [US3] Remove untrusted outbound error detail from discovered token and refresh failures, Admin logs, status, and audit. Separate caller cancellation from attempt deadlines and retain safe approved failure codes.
 - [X] T115 [US4] Reject equal-microsecond discovery completions in memory and PostgreSQL. Retain the first committed outcome, active fields, ETag, and failed status on ties; record the policy in proposed ADR 040 and architecture docs.
+- [X] T116 [US2] Require every DCR registration response to return `token_endpoint_auth_method` identical to the requested method. Reject a missing or different value with `client_registration_invalid`, store nothing, and do not retry another method; cover confidential and public DCR in the domain response-validation tests.
 
 ## Dependencies and Execution Order
 
