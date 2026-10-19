@@ -282,7 +282,7 @@ An unauthenticated request returns `{"error":"missing or empty principal"}` from
 
 Extend `ErrorResponse` with optional `authorization_servers`. `error` remains required and `message` remains optional. Its error categories remain unchanged.
 
-`error` names the category. When `message` is a code, it is one of the section 4.1 failure codes. A failed discovery-backed update also stores that code as the status `failure_reason`, and audit records use it as `failure_code`. Field-level validation text, precondition text, and the omitted `500` message are not failure codes.
+`error` names the category. When `message` is a code, it is one of the section 4.1 failure codes. A failed discovery-backed update also stores that code as the status `failure_reason`, and audit records use it as `failure_code`. Field-level validation text, precondition text, the protected-resource ownership message, and the omitted `500` message are not failure codes.
 
 | Condition | Status | `error` | `message` |
 |---|---|---|---|
