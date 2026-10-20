@@ -1362,6 +1362,13 @@
           }
         }
       }
+    },
+    "extraObjects": {
+      "type": "array",
+      "description": "Additional Kubernetes manifests rendered with tpl, as maps or multi-line strings",
+      "items": {
+        "type": ["object", "string"]
+      }
     }
   },
   "definitions": {
