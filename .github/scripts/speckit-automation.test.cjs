@@ -1,5 +1,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const vm = require("node:vm");
 const { test } = require("node:test");
 const {
@@ -41,6 +43,7 @@ function fixture(eventName, payload, options = {}) {
   const calls = [];
   const pr = {
     number: 42, state: "open", draft: true,
+    user: { login: "github-actions[bot]", type: "Bot" },
     body: "<!-- speckit-issue: 7 -->",
     head: { ref: "speckit/issue-7", sha: "a".repeat(40), repo: { full_name: "example/broker" } },
     base: { ref: "main", repo: { full_name: "example/broker" } },
@@ -114,6 +117,7 @@ test("relabeling resumes clarification for an existing managed PR without a clar
   const payload = { action: "labeled", label: { name: "speckit:specify" }, issue };
   const existing = {
     number: 42, state: "open", draft: true,
+    user: { login: "github-actions[bot]", type: "Bot" },
     body: "<!-- speckit-issue: 7 -->",
     head: { ref: "speckit/issue-7", repo: { full_name: "example/broker" } },
     base: { repo: { full_name: "example/broker" } },
@@ -136,6 +140,27 @@ test("relabeling resumes clarification for an existing managed PR without a clar
     existing: [{ ...existing, body: "Related issue: https://github.com/example/broker/issues/7" }],
   });
   assert.deepEqual(await route(visibleLink), { action: "clarify", issue: 7, pr: 42, comment: 0 });
+});
+
+test("only Specify-created PRs are managed, whatever their body claims", async (t) => {
+  preparationIO(t);
+  const body = "<!-- speckit-issue: 7 -->\nRelated issue: https://github.com/example/broker/issues/7\n<!-- gh-aw-workflow-id: speckit-specify -->";
+  for (const user of [{ login: "contributor", type: "User" }, { login: "dependabot[bot]", type: "Bot" }]) {
+    const pr = { user, body };
+    const relabel = fixture("issues", { action: "labeled", label: { name: "speckit:specify" }, issue: { number: 7, state: "open" } }, {
+      existing: [{
+        number: 42, state: "open", draft: true, ...pr,
+        head: { ref: "speckit/issue-7", repo: { full_name: "example/broker" } },
+        base: { repo: { full_name: "example/broker" } },
+      }],
+    });
+    assert.deepEqual(await route(relabel), { action: "noop" });
+    const planning = fixture("pull_request_target", { action: "labeled", label: { name: "speckit:plan-execution" }, pull_request: { number: 42 } }, {
+      pr, comments: [comment(result("clarify"))],
+    });
+    assert.deepEqual(await route(planning), { action: "noop" });
+    await assert.rejects(prepare({ ...fixture("pull_request_target", {}, { pr }), inputs: { phase: "clarify", pr: 42 } }), /managed/);
+  }
 });
 
 test("only maintainer comments posted after pending questions become answers", async () => {
@@ -207,6 +232,10 @@ test("invalid and duplicate feature metadata fail closed instead of reading a po
     "<!-- speckit-feature: ../../other -->",
     "<!-- speckit-feature: specs/042-example -->\n<!-- speckit-feature: specs/043-other -->",
     "Specification: https://github.com/example/broker/blob/speckit/issue-7/../../spec.md",
+    "<!-- speckit-feature:  -->",
+    "<!-- speckit-feature: -->",
+    "<!-- speckit-feature:  -->\nSpecification: https://github.com/example/broker/blob/speckit/issue-7/specs/042-example/spec.md",
+    "Specification: https://github.com/example/broker/blob/speckit/issue-7//spec.md",
   ]) {
     const f = fixture("pull_request_target", payload, {
       pr: { body: `<!-- speckit-issue: 7 -->\n${metadata}` },
@@ -217,35 +246,68 @@ test("invalid and duplicate feature metadata fail closed instead of reading a po
   }
 });
 
-test("select-feature materializes only validated sandbox-local state", () => {
+function selectFeatureWorkspace(t) {
   const source = fs.readFileSync(require.resolve("./speckit-automation.cjs"), "utf8");
-  const saved = [];
-  let feature = spec;
-  let symlink = false;
-  const io = {
-    readFileSync: (name) => name.endsWith("context.json")
-      ? JSON.stringify({ feature }) : "Specification",
-    lstatSync: () => ({ isSymbolicLink: () => symlink }),
-    existsSync: () => false,
-    writeFileSync: (name, body) => saved.push({ name, body }),
-  };
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "speckit-select-"));
+  const workspace = path.join(root, "workspace");
+  const outside = path.join(root, "outside");
+  const cwd = process.cwd();
+  t.after(() => {
+    process.chdir(cwd);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  fs.mkdirSync(path.join(workspace, spec), { recursive: true });
+  fs.mkdirSync(path.join(workspace, ".specify"));
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(workspace, spec, "spec.md"), "Specification");
+  process.chdir(workspace);
+  const context = { feature: spec };
+  const io = Object.assign(Object.create(fs), {
+    readFileSync: (name, ...rest) => name === "/tmp/gh-aw/speckit/context.json"
+      ? JSON.stringify(context) : fs.readFileSync(name, ...rest),
+  });
   const run = () => {
     const module = { exports: {} };
     const load = (name) => name === "node:fs" ? io : require(name);
     load.main = module;
     vm.runInNewContext(source, {
-      module, require: load, process: { argv: ["node", "automation.cjs", "select-feature"], cwd: () => "/workspace" },
+      module, require: load,
+      process: { argv: ["node", "automation.cjs", "select-feature"], cwd: () => workspace },
     });
   };
+  return { run, context, outside, pointer: ".specify/feature.json" };
+}
+
+test("select-feature creates or replaces a regular sandbox pointer", (t) => {
+  const { run, context, pointer } = selectFeatureWorkspace(t);
+  const selected = `${JSON.stringify({ feature_directory: spec })}\n`;
   run();
-  assert.equal(saved[0].name, ".specify/feature.json");
-  assert.deepEqual(JSON.parse(saved[0].body), { feature_directory: spec });
-  feature = "../../other";
+  assert.equal(fs.readFileSync(pointer, "utf8"), selected);
+  fs.writeFileSync(pointer, '{\n  "feature_directory": "specs/001-longer-legacy-feature"\n}\n');
+  run();
+  assert.equal(fs.readFileSync(pointer, "utf8"), selected);
+  context.feature = "../../other";
   assert.throws(run, /Invalid Spec Kit feature/);
-  feature = spec;
-  symlink = true;
-  assert.throws(run, /[Ss]ymlink/);
-  assert.equal(saved.length, 1);
+  assert.equal(fs.readFileSync(pointer, "utf8"), selected);
+});
+
+test("select-feature never writes through symlinks", (t) => {
+  const { run, outside, pointer } = selectFeatureWorkspace(t);
+  const live = path.join(outside, "live.json");
+  const dangling = path.join(outside, "dangling.json");
+  fs.writeFileSync(live, "outside");
+  for (const target of [live, dangling]) {
+    fs.rmSync(pointer, { force: true });
+    fs.symlinkSync(target, pointer);
+    assert.throws(run, /must not be a symlink/);
+    assert(fs.lstatSync(pointer).isSymbolicLink());
+  }
+  assert.equal(fs.readFileSync(live, "utf8"), "outside");
+  assert(!fs.existsSync(dangling));
+  fs.rmSync(".specify", { recursive: true });
+  fs.symlinkSync(outside, ".specify");
+  assert.throws(run, /must not be a symlink/);
+  assert(!fs.existsSync(path.join(outside, "feature.json")));
 });
 
 test("implementation fails closed for missing, stale, blocked, or severe analysis", async () => {

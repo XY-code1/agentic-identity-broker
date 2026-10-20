@@ -52,8 +52,12 @@ function validateResult(result) {
   return result;
 }
 
+function actionsBot(user) {
+  return user?.login === "github-actions[bot]" && user?.type === "Bot";
+}
+
 function parseResult(comment) {
-  if (comment.user?.login !== "github-actions[bot]" || comment.user?.type !== "Bot" ||
+  if (!actionsBot(comment.user) ||
       !/gh-aw-workflow-id: speckit-(phase|plan|analyze|implement)\b/.test(comment.body || "")) return null;
   if (comment.body.split(marker).length !== 2) return null;
   const match = comment.body.match(/<!-- speckit-result -->\s*```json\s*\n([\s\S]*?)\n```/);
@@ -84,7 +88,7 @@ function managedPR(pr, repo) {
   const related = (pr.body || "").split(/\r?\n/).find((line) => line.startsWith(relatedPrefix));
   const issue = pr.body?.match(/<!-- speckit-issue: (\d+) -->/) ||
     related?.slice(relatedPrefix.length).match(/^(\d+)$/);
-  return pr.state === "open" && pr.draft && issue &&
+  return pr.state === "open" && pr.draft && issue && actionsBot(pr.user) &&
     pr.head.repo?.full_name === `${repo.owner}/${repo.repo}` &&
     pr.base.repo?.full_name === `${repo.owner}/${repo.repo}` &&
     pr.head.ref === `speckit/issue-${issue[1]}` ? Number(issue[1]) : 0;
@@ -105,12 +109,15 @@ async function readFile(github, repo, ref, name, optional = false) {
 }
 
 async function artifacts(github, repo, pr) {
-  const markers = [...(pr.body || "").matchAll(/<!-- speckit-feature: ([^\r\n]*?) -->/g)];
-  if (markers.length > 1) throw new Error("Multiple Spec Kit feature markers");
-  let selected = markers[0]?.[1];
-  if (!selected) {
+  const body = pr.body || "";
+  const markers = body.split("<!-- speckit-feature:").length - 1;
+  if (markers > 1) throw new Error("Multiple Spec Kit feature markers");
+  let selected;
+  if (markers) {
+    selected = body.match(/<!-- speckit-feature: ([^\r\n]*?) -->/)?.[1] ?? "";
+  } else {
     const prefix = `Specification: https://github.com/${repo.owner}/${repo.repo}/blob/${pr.head.ref}/`;
-    const links = (pr.body || "").split(/\r?\n/).filter((line) => line.startsWith(prefix));
+    const links = body.split(/\r?\n/).filter((line) => line.startsWith(prefix));
     if (links.length > 1) throw new Error("Multiple Spec Kit specification links");
     if (links.length) {
       const target = links[0].slice(prefix.length);
@@ -118,7 +125,7 @@ async function artifacts(github, repo, pr) {
       selected = target.slice(0, -"/spec.md".length);
     }
   }
-  if (!selected) {
+  if (selected === undefined) {
     const state = JSON.parse(await readFile(github, repo, pr.head.sha, ".specify/feature.json"));
     selected = state.feature_directory;
   }
@@ -300,18 +307,34 @@ function writeResult() {
     `${draft.report}\n\n${marker}\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\`\n`);
 }
 
+function selectFeature() {
+  const context = JSON.parse(fs.readFileSync(`${directory}/context.json`, "utf8"));
+  const feature = featurePath(context.feature);
+  localFile(`${feature}/spec.md`);
+  const { O_WRONLY, O_CREAT, O_NOFOLLOW } = fs.constants;
+  if (!O_NOFOLLOW) throw new Error("Symlink-safe feature pointer writes are unsupported");
+  if (fs.lstatSync(".specify").isSymbolicLink()) throw new Error("Feature pointer must not be a symlink");
+  let pointer;
+  try {
+    pointer = fs.openSync(".specify/feature.json", O_WRONLY | O_CREAT | O_NOFOLLOW);
+  } catch (error) {
+    if (error.code === "ELOOP") throw new Error("Feature pointer must not be a symlink");
+    throw error;
+  }
+  try {
+    if (!fs.fstatSync(pointer).isFile()) throw new Error("Feature pointer must be a regular file");
+    fs.ftruncateSync(pointer);
+    fs.writeFileSync(pointer, `${JSON.stringify({ feature_directory: feature })}\n`);
+  } finally {
+    fs.closeSync(pointer);
+  }
+}
+
 module.exports = { artifactHashes, parseResult, route, requireResult, prepare, verify };
 
 if (require.main === module) {
   if (process.argv[2] === "select-feature") {
-    const context = JSON.parse(fs.readFileSync(`${directory}/context.json`, "utf8"));
-    const feature = featurePath(context.feature);
-    localFile(`${feature}/spec.md`);
-    if (fs.lstatSync(".specify").isSymbolicLink() ||
-        (fs.existsSync(".specify/feature.json") && fs.lstatSync(".specify/feature.json").isSymbolicLink())) {
-      throw new Error("Feature pointer must not be a symlink");
-    }
-    fs.writeFileSync(".specify/feature.json", `${JSON.stringify({ feature_directory: feature })}\n`);
+    selectFeature();
   } else if (process.argv[2] === "result") {
     writeResult();
   } else {
