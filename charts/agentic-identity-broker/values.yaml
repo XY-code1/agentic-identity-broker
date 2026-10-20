@@ -745,3 +745,18 @@ approvals:
     max_pending_per_pair: 50
     # -- Maximum approval creation requests per minute per (principal, agent) pair
     max_requests_per_minute: 10
+
+# -- Additional Kubernetes manifests to deploy with the release. Each entry is a map or a
+# multi-line string and is rendered with Helm's `tpl`, so entries can use template expressions
+# such as `{{ include "agentic-identity-broker.fullname" . }}`. To emit literal `{{ ... }}` for a
+# tool that templates the rendered manifests later, wrap it in a string constant:
+# `'{{ "{{{BUILD_VERSION}}}" }}'` renders as `'{{{BUILD_VERSION}}}'`. Mustache-based tools
+# HTML-escape `{{VAR}}` values, so use `{{{VAR}}}` for values that must stay unchanged.
+extraObjects: []
+  # - apiVersion: v1
+  #   kind: ConfigMap
+  #   metadata:
+  #     name: '{{ include "agentic-identity-broker.fullname" . }}-extra'
+  #     namespace: '{{ include "agentic-identity-broker.namespace" . }}'
+  #   data:
+  #     build: '{{ "{{{BUILD_VERSION}}}" }}'
