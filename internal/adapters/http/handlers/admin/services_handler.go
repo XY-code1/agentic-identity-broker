@@ -163,6 +163,24 @@ func serviceClientAuthentication(req ServiceRequest) (model.TokenEndpointAuthMet
 	return method, model.NewPlaintextSecret(req.ClientSecret), nil
 }
 
+// setDiscoveryResponseDeadline leaves time to record a failed refresh after the outbound attempt.
+func (h *ServicesHandler) setDiscoveryResponseDeadline(w http.ResponseWriter, r *http.Request) bool {
+	if r.Context().Value(http.ServerContextKey) == nil {
+		return true // A direct handler call has no server write deadline.
+	}
+	deadline := time.Now().Add(thirdparty.DiscoveryAttemptTimeout + 5*time.Second)
+	if h.config != nil {
+		read := h.config.Storage.Timeouts.Read
+		deadline = deadline.Add(read).Add(read).Add(read).Add(h.config.Storage.Timeouts.Write)
+	}
+	if err := http.NewResponseController(w).SetWriteDeadline(deadline); err != nil {
+		h.logger.ErrorContext(r.Context(), "discovery response write deadline unavailable", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		return false
+	}
+	return true
+}
+
 // CreateService handles POST /api/third-party/oauth2/clients
 func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -281,6 +299,10 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	if req.Discovery.ResourceURL != nil && !h.setDiscoveryResponseDeadline(w, r) {
+		return
+	}
+
 	// Create service (branch key provisioning and encryption handled by domain service)
 	if err := h.providerService.Create(ctx, entity); err != nil {
 		h.handleServiceMutationError(w, r, "CreateService", err, req.Discovery.ResourceURL != nil)
@@ -393,6 +415,10 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		h.logger.Warn("service validation failed", "error", err)
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		return
+	}
+
+	if req.Discovery.ResourceURL != nil && !h.setDiscoveryResponseDeadline(w, r) {
 		return
 	}
 

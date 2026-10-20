@@ -63,7 +63,7 @@ An omitted `token_endpoint_auth_method` does not mean static confidential mode w
 
 The broker takes the DCR `client_name` from deployment-wide `third_party_oauth2.client_name`, never `display_name`. An absent or blank setting stops DCR before registration. It does not block startup, manual services, or hosted CIMD. The name is not an Admin API request field.
 
-Discovery and registration share a 15-second deadline and a 256-KiB cap per response. They do not follow redirects or use proxies.
+Discovery and registration share a 10-second deadline and a 256-KiB cap per response. They do not follow redirects or use proxies.
 Discovery-backed token calls use a separate guarded client with the configured upstream token timeout. The client rejects redirects, proxies, and blocked resolved addresses before connection.
 
 ### 1.2 Create example
@@ -336,7 +336,7 @@ Discovery error messages, `failure_reason` values, and audit records use only th
 | `issuer_mismatch` | Issuer metadata is not identical to the selected issuer. |
 | `unsafe_destination` | A URL is not public HTTPS, resolves to a blocked address, or redirects. |
 | `response_too_large` | A remote response exceeds 256 KiB. |
-| `timeout` | The 15-second attempt deadline expired. |
+| `timeout` | The 10-second attempt deadline expired. |
 | `no_compatible_client_method` | No compatible CIMD or DCR method exists. |
 | `cimd_unavailable` | The selected hosted CIMD identity or signing key is not usable. |
 | `client_registration_rejected` | The selected DCR registration returned an error. |

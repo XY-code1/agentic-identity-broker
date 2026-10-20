@@ -622,7 +622,7 @@ Content-Type: application/json
 ### Security Requirements
 
 - **SR-001**: All supplied and discovered remote locations MUST use public HTTPS origins in production. The broker MUST block internal, loopback, link-local, cloud-metadata, and redirected private destinations before making connections.
-- **SR-002**: An unanswered discovery or registration attempt MUST finish within 15 seconds. Each remote document MUST be at most 256 KiB. Invalid documents, untrusted redirects, and identity mismatches MUST fail closed.
+- **SR-002**: An unanswered discovery or registration attempt MUST finish within 10 seconds. Each remote document MUST be at most 256 KiB. Invalid documents, untrusted redirects, and identity mismatches MUST fail closed.
 - **SR-003**: A DCR secret and any required registration-management credential MUST remain protected at rest. The broker MUST discard unused management credentials. Neither administrative responses nor status records MUST disclose them.
 - **SR-004**: The broker MUST authenticate with only the selected client's supported method. It MUST NOT downgrade after CIMD or confidential DCR fails during creation, connection, or renewal.
 - **SR-005**: Discovery, registration, rejection, and refresh attempts MUST produce audit records with service identity and outcome. These records MUST NOT contain client secrets, assertions, tokens, or raw remote error bodies.

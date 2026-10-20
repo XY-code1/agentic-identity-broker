@@ -354,7 +354,7 @@ Discovery and registration errors use safe `message` codes. They never include p
 | `404` | Update or discovery-status GET | The service does not exist. Missing provider metadata instead returns `400`. |
 | `409` | Create or update | Duplicate client identity or protected-resource ownership. Manual client-ID conflicts also return `409`. |
 | `409` | Update | An issuer or effective audience change with user sessions, including expired sessions. |
-| `504` | Create or update | Discovery or registration exceeded the 15-second attempt deadline. The `message` is `timeout`. |
+| `504` | Create or update | Discovery or registration exceeded the 10-second attempt deadline. The `message` is `timeout`. |
 
 Discovery failures use `error: "discovery failed"` and a safe `message` code.
 Resource codes are `resource_metadata_not_found`, `resource_metadata_unavailable`, `resource_metadata_invalid`, and `resource_mismatch`.

@@ -28,7 +28,7 @@ The design keeps the existing `ThirdpartyOAuth2ProviderEntity` aggregate. It add
 
 **Constraints**:
 
-- One 15-second deadline covers each discovery and registration attempt.
+- One 10-second deadline covers each discovery and registration attempt.
 - Each remote response has a 256-KiB limit.
 - Production remote connections use public HTTPS and dial-time IP blocking. They reject redirects.
 - Every discovery-backed connection uses PKCE S256.
@@ -51,7 +51,7 @@ The design keeps the existing `ThirdpartyOAuth2ProviderEntity` aggregate. It add
 |---|---|---|
 | Domain model and glossary | Pass | [data-model.md](./data-model.md) defines the aggregate fields, metadata values, client registration, status, transitions, and invariants. Add its glossary terms to `ARCHITECTURE.md` before implementation. |
 | Entity IDs | Pass | Status and client registration belong to the existing `id.ServiceID` aggregate. No new UUID entity or `gen_ids.go` entry is necessary. |
-| Configuration design and examples | Planned | Add the optional `third_party_oauth2.client_name` key through the broker configuration port, loader, environment binding, CLI flag, configuration guide, and protected-resource example. Require a non-blank value only when DCR is selected. Keep the fixed 15-second and 256-KiB limits and the HTTPS hosted-CIMD public URL. |
+| Configuration design and examples | Planned | Add the optional `third_party_oauth2.client_name` key through the broker configuration port, loader, environment binding, CLI flag, configuration guide, and protected-resource example. Require a non-blank value only when DCR is selected. Keep the fixed 10-second and 256-KiB limits and the HTTPS hosted-CIMD public URL. |
 | Helm deployment contract | Planned | Add `broker.thirdPartyOauth2.clientName` in values, schema, README, and ConfigMap. The existing chart already passes `server.enduser.public_url`. Do not block startup or manual/CIMD use when the name is absent. |
 | API design and approval | Pass with implementation precondition | The 2026-10-01 clarification confirms `discovery.resource_url`, `authorization_params.resource`, and the status path and fields. [contracts/admin-api.md](./contracts/admin-api.md) defines the remaining representation details. Record stakeholder review of the canonical `api/admin/openapi.yaml` before implementation. |
 | Database design | Pass | Add `039_add_protected_resource_discovery.{up,down}.sql`. Test apply, guarded rollback, clean rollback, replay, and existing rows. |
@@ -69,7 +69,7 @@ The approved Admin API review record is linked in the draft [feature PR #191](ht
 |---|---|---|
 | Security-first | Pass | Enforce exact identities, safe destinations, no redirects, bounded responses, fixed method selection, and fail-closed errors. Use the guarded transport for discovery-backed token requests too. |
 | Binding ADRs | Precondition | Draft and accept ADR 040 before Phase 2.5. It defines the discovery and registration port boundary. It supersedes ADR 036 decision 2 only for DCR-issued `client_secret_basic` and `client_secret_post` clients. ADRs 004, 008, 012, 015, 030, and 037 remain binding. |
-| Architecture and glossary | Planned | Update the outbound flow, SSRF boundary, client modes, glossary, audit rules, and ADR index in `ARCHITECTURE.md`. Document SC-006: at least 19 of 20 registrations finish within five seconds when each external response takes at most one second. Record the 15-second/256-KiB security limits there. Phase 0 path changes belong in the separate refactor PR. |
+| Architecture and glossary | Planned | Update the outbound flow, SSRF boundary, client modes, glossary, audit rules, and ADR index in `ARCHITECTURE.md`. Document SC-006: at least 19 of 20 registrations finish within five seconds when each external response takes at most one second. Record the 10-second/256-KiB security limits there. Phase 0 path changes belong in the separate refactor PR. |
 | Library-first security | Pass | Use Go TLS and network controls, `golang.org/x/oauth2`, and the existing JWX CIMD signer. Add no cryptography. Keep DCR secret encryption inside the existing domain service and `EncryptionPort`. |
 | Zalando and OpenAPI | Planned | Reuse resource names, `PreAuthProxy`, `ErrorResponse`, status mappings, and ETags. Update the canonical OpenAPI file first. |
 | End-user documentation | Planned | Update `docs/reference/api.md` and `docs/guides/manage-agents-and-services.md`. No End-user OpenAPI route changes. |
@@ -177,7 +177,9 @@ Main already builds one shared `upstreamClient` for session tokens, proxy grants
 
 Set `Proxy` to nil on the guarded transport so its dial-time guard sees the actual target IP. Do not inherit `http.ProxyFromEnvironment` from the shared transport. Leave proxy behavior on the existing shared client unchanged.
 
-Discovery and DCR use one 15-second attempt deadline and 256-KiB response bounds. Code exchange and refresh use the configured upstream timeout and their existing token-response limits. The guarded transport can serve clients with different per-operation deadlines. CIMD keeps its separate fetch timeout and body cap while reusing the dial-time guard code.
+Discovery and DCR use one 10-second attempt deadline and 256-KiB response bounds. Code exchange and refresh use the configured upstream timeout and their existing token-response limits. The guarded transport can serve clients with different per-operation deadlines. CIMD keeps its separate fetch timeout and body cap while reusing the dial-time guard code.
+
+The Admin handler sets a finite write deadline for protected-resource create and update requests. It allows the attempt, three configured storage reads, one failure-status write, and five seconds for the response. Other HTTP requests retain the server's 15-second write timeout. A failed refresh can record its safe status after the remote attempt ends.
 
 ### 2. Add a narrow discovery port
 
@@ -200,7 +202,7 @@ The service follows these steps:
 1. Validate request shape before network access.
 2. Allocate the service ID for create.
 3. Check the explicit issuer-change session rule with `UserSessionRepository.CountByService` for update.
-4. Run resource and issuer discovery under one 15-second context.
+4. Run resource and issuer discovery under one 10-second context.
 5. On create, select hosted CIMD, confidential DCR, or public DCR according to [upstream-oauth.md](./contracts/upstream-oauth.md). On every update, keep both `ClientMethod` and the exact `TokenEndpointAuthMethod`. If an explicitly selected new issuer cannot support the stored method, reject the update without registering another method or downgrading a confidential client.
 6. Validate the selected identity and effective resource.
 7. Encrypt a confidential DCR secret with the service subject.
@@ -277,7 +279,7 @@ Add `GetDiscoveryStatus` to `ServicesHandler`. Mount `GET /api/services/{service
 #### Phase 2b: Configuration Design
 
 - Document the new optional `third_party_oauth2.client_name` key. DCR rejects an absent or blank value before registration; startup, manual services, and CIMD remain available.
-- Keep the 15-second and 256-KiB discovery limits fixed. Hosted CIMD needs an HTTPS `server.enduser.public_url`.
+- Keep the 10-second and 256-KiB discovery limits fixed. Hosted CIMD needs an HTTPS `server.enduser.public_url`.
 - Add `examples/config/protected-resource-discovery.yaml` with the broker client name and reference it from `examples/config/README.md`.
 - Add the broker client name to the Helm values, schema, ConfigMap, and README. Keep the existing public-URL mapping.
 - The chart already forwards `broker.server.enduser.publicUrl` to `server.enduser.public_url`. The new `broker.thirdPartyOauth2.clientName` key forwards nonempty names to `third_party_oauth2.client_name`.

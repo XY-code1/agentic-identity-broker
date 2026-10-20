@@ -354,7 +354,9 @@ If you select hosted CIMD without a usable client-authentication key, generate a
 
 Set `discovery.resource_url` to a public HTTPS URL in a service create or update request to the Admin API. It is not a broker configuration key. The service's `display_name` and optional `authorization_params.resource` also belong in that request. If no resource override is present, the broker derives the effective token resource from the verified discovery URL.
 
-One fixed 15-second deadline covers each protected-resource discovery and registration attempt. Each remote discovery or registration response has a fixed 256-KiB limit. These are not configuration keys. CIMD document fetches, OAuth code exchange, and token refresh keep their separate limits.
+One fixed 10-second deadline covers each protected-resource discovery and registration attempt. Each remote discovery or registration response has a fixed 256-KiB limit. These are not configuration keys. CIMD document fetches, OAuth code exchange, and token refresh keep their separate limits.
+
+Discovery-backed Admin create and update requests have a longer, finite HTTP response deadline. It includes the attempt, three configured storage-read timeouts, one storage-write timeout, and five seconds for the response. The default storage timeouts give these requests 40 seconds after parsing. Other requests retain the server's 15-second write timeout. An upstream proxy must permit the full Admin response window.
 
 See [the protected-resource configuration example](../examples/config/protected-resource-discovery.yaml) and the [Admin API service contract](../api/admin/openapi.yaml) for the separate broker and service fields.
 

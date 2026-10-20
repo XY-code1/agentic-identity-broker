@@ -159,7 +159,7 @@ The optional `third_party_oauth2.client_name` names the broker or its platform. 
 
 Hosted CIMD and DCR require a stable, public HTTPS `server.enduser.public_url`. DCR uses this URL for its OAuth2 callback. If no usable CIMD key exists, generate an ES256 client-authentication key with `POST /api/cimd-client-keys` on the Admin API. This key is separate from the JWE key for OAuth2 state.
 
-Send a public HTTPS `discovery.resource_url` with `discovery.enable_discovery: true` in each service's Admin API create or update request. These are service request fields, not broker configuration keys. Discovery and registration share a fixed 15-second attempt deadline and a fixed 256-KiB limit per remote response. See the [configuration reference](../../docs/configuration.md#protected-resource-discovery-configuration) for the client-name environment variable and CLI flag.
+Send a public HTTPS `discovery.resource_url` with `discovery.enable_discovery: true` in each service's Admin API create or update request. These are service request fields, not broker configuration keys. Discovery and registration share a fixed 10-second attempt deadline and a fixed 256-KiB limit per remote response. See the [configuration reference](../../docs/configuration.md#protected-resource-discovery-configuration) for the client-name environment variable and CLI flag.
 
 ### `jwt-preauth.yaml`
 

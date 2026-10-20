@@ -165,7 +165,8 @@ func (s *ThirdpartyOAuth2ProviderService) auditDiscovery(entity *model.Thirdpart
 	s.logger.Info("protected-resource discovery", fields...)
 }
 
-const discoveryAttemptTimeout = 15 * time.Second
+// DiscoveryAttemptTimeout bounds resource discovery and registration together.
+const DiscoveryAttemptTimeout = 10 * time.Second
 
 func setEffectiveDiscoveryResource(entity *model.ThirdpartyOAuth2ProviderEntity) {
 	if entity.AuthorizationParams == nil {
@@ -184,7 +185,7 @@ func (s *ThirdpartyOAuth2ProviderService) prepareDiscoveryCreate(ctx context.Con
 	if entity.ID.IsZero() {
 		entity.ID = id.NewServiceID()
 	}
-	attemptCtx, cancel := context.WithTimeout(ctx, discoveryAttemptTimeout)
+	attemptCtx, cancel := context.WithTimeout(ctx, DiscoveryAttemptTimeout)
 	defer cancel()
 	selected, err := s.discoverProtectedResource(attemptCtx, *entity.Discovery.ResourceURL, entity.IssuerURI, entity.ID)
 	if err := attemptCtx.Err(); err != nil {
@@ -253,7 +254,7 @@ func (s *ThirdpartyOAuth2ProviderService) prepareDiscoveryUpdate(ctx context.Con
 	if !issuerChanged {
 		entity.IssuerURI = persisted.IssuerURI
 	}
-	attemptCtx, cancel := context.WithTimeout(ctx, discoveryAttemptTimeout)
+	attemptCtx, cancel := context.WithTimeout(ctx, DiscoveryAttemptTimeout)
 	defer func() {
 		if resultErr != nil {
 			completedAt = time.Now().UTC()

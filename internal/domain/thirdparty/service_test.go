@@ -3339,6 +3339,36 @@ func TestThirdpartyOAuth2ProviderService_Update_AttemptTimeoutRecordsSafeFailure
 	assertFailedDiscoveryKeepsActiveService(t, stored, repo, "timeout")
 }
 
+type deadlineDiscoveryClient struct {
+	*recordingOAuthDiscoveryClient
+	deadline time.Time
+}
+
+func (c *deadlineDiscoveryClient) Probe(ctx context.Context, _ string) (int, []string, error) {
+	c.deadline, _ = ctx.Deadline()
+	return 0, nil, ports.ErrOAuthDiscoveryTimeout
+}
+
+func TestThirdpartyOAuth2ProviderService_Update_UsesTenSecondDiscoveryDeadline(t *testing.T) {
+	stored := readyRefreshProvider(model.TokenEndpointAuthMethodClientSecretBasic)
+	repo := newRefreshTestRepository(stored)
+	client := &deadlineDiscoveryClient{recordingOAuthDiscoveryClient: dcrDiscoveryClient(issuerDCRDocument([]string{"client_secret_basic"}, nil))}
+	service := refreshTestService(repo, client, &functionFieldEncryption{}, new(bytes.Buffer))
+	replacement := refreshRequest(stored)
+	replacement.ID = stored.ID
+
+	started := time.Now()
+	err := service.Update(context.Background(), replacement, &stored.Version)
+	var discoveryErr *DiscoveryError
+	require.ErrorAs(t, err, &discoveryErr)
+	assert.Equal(t, "timeout", discoveryErr.Code)
+	require.False(t, client.deadline.IsZero())
+	budget := client.deadline.Sub(started)
+	assert.GreaterOrEqual(t, budget, 9*time.Second)
+	assert.LessOrEqual(t, budget, 11*time.Second)
+	assertFailedDiscoveryKeepsActiveService(t, stored, repo, "timeout")
+}
+
 func TestThirdpartyOAuth2ProviderService_Update_StaleFailureDoesNotReplaceNewerSuccessOrLeakProviderBody(t *testing.T) {
 	stored := readyRefreshProvider(model.TokenEndpointAuthMethodClientSecretBasic)
 	repo := newRefreshTestRepository(stored)

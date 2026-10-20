@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	encryptionnoop "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/noop"
+	brokerhttp "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
@@ -2043,6 +2044,86 @@ func adminCIMDDiscoveryClient(t *testing.T) *adminDiscoveryClient {
 		"https://mcp.example.test/.well-known/oauth-protected-resource/mcp":       `{"resource":"https://mcp.example.test/mcp","authorization_servers":["https://auth.example.test/tenant"]}`,
 		"https://auth.example.test/.well-known/oauth-authorization-server/tenant": `{"issuer":"https://auth.example.test/tenant","authorization_endpoint":"https://auth.example.test/tenant/authorize","token_endpoint":"https://auth.example.test/tenant/token","client_id_metadata_document_supported":true,"token_endpoint_auth_methods_supported":["private_key_jwt","client_secret_basic"],"token_endpoint_auth_signing_alg_values_supported":["ES256"],"registration_endpoint":"https://auth.example.test/tenant/register"}`,
 	}}
+}
+
+type delayedAdminDiscoveryClient struct {
+	*adminDiscoveryClient
+	delay time.Duration
+}
+
+func (c *delayedAdminDiscoveryClient) Probe(ctx context.Context, _ string) (int, []string, error) {
+	timer := time.NewTimer(c.delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return 0, nil, ports.ErrOAuthDiscoveryTimeout
+	case <-ctx.Done():
+		return 0, nil, ctx.Err()
+	}
+}
+
+func TestServicesHandler_DiscoveryTimeoutRespondsAfterServerWriteDeadline(t *testing.T) {
+	const writeTimeout = 25 * time.Millisecond
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		t.Run(method, func(t *testing.T) {
+			repo := new(MockProviderRepository)
+			config := testConfig()
+			config.Storage.Timeouts = ports.StorageTimeouts{Read: 100 * time.Millisecond, Write: 100 * time.Millisecond}
+			handler := setupHandlerWithConfig(t, repo, config)
+			handler.providerService.WithOAuthDiscoveryClient(&delayedAdminDiscoveryClient{
+				adminDiscoveryClient: adminCIMDDiscoveryClient(t), delay: 3 * writeTimeout,
+			})
+
+			path := "/api/services"
+			if method == http.MethodPut {
+				serviceID := id.NewServiceID()
+				path += "/" + serviceID.String()
+				previousSuccess := time.Now().Add(-time.Hour).UTC()
+				active := &model.ThirdpartyOAuth2ProviderEntity{
+					ID: serviceID, DisplayName: "MCP service", ClientID: id.ClientID("https://broker.example.com/.well-known/oauth-client/" + serviceID.String()),
+					Secret: model.NewAbsentSecret(), TokenEndpointAuthMethod: model.TokenEndpointAuthMethodPrivateKeyJWT,
+					IssuerURI: adminTestIssuer, Discovery: model.DiscoveryConfig{EnableDiscovery: true, ResourceURL: ptrAdminResourceURL(), ClientMethod: model.ClientBootstrapCIMD},
+					Endpoints:           model.OAuth2Endpoints{AuthorizeEndpoint: adminTestIssuer + "/authorize", TokenEndpoint: adminTestIssuer + "/token"},
+					AuthorizationParams: map[string]string{"resource": adminTestResource}, Version: 7,
+					DiscoveryStatus: model.DiscoveryStatus{LastAttemptAt: &previousSuccess, LastSuccessAt: &previousSuccess},
+				}
+				repo.On("Get", mock.Anything, serviceID).Return(active, nil).Once()
+				repo.On("RecordDiscoveryFailure", mock.Anything, serviceID, int64(7), mock.Anything, "timeout").Run(func(args mock.Arguments) {
+					time.Sleep(2 * writeTimeout)
+					attempted := args.Get(3).(time.Time)
+					code := args.String(4)
+					active.DiscoveryStatus.LastAttemptAt = &attempted
+					active.DiscoveryStatus.FailureReason = &code
+				}).Return(nil).Once()
+				defer func() {
+					assert.Equal(t, "failed", active.DiscoveryStatus.Status(active.Discovery.ResourceURL))
+					assert.Equal(t, adminTestIssuer, active.IssuerURI)
+					assert.Equal(t, int64(7), active.Version)
+				}()
+			}
+
+			router := brokerhttp.NewHandler(brokerhttp.ServerConfig{Name: "admin"}, func(r chi.Router) {
+				r.Post("/api/services", handler.CreateService)
+				r.Put("/api/services/{service-id}", handler.UpdateService)
+			}, slog.Default())
+			server := httptest.NewUnstartedServer(router)
+			server.Config.WriteTimeout = writeTimeout
+			server.Start()
+			defer server.Close()
+
+			request, err := http.NewRequest(method, server.URL+path, strings.NewReader(`{"display_name":"MCP service","discovery":{"enable_discovery":true,"resource_url":"https://mcp.example.test/mcp"}}`))
+			require.NoError(t, err)
+			request.Header.Set("Content-Type", "application/json")
+			response, err := (&http.Client{Timeout: 2 * time.Second}).Do(request)
+			require.NoError(t, err)
+			defer func() { _ = response.Body.Close() }()
+			require.Equal(t, http.StatusGatewayTimeout, response.StatusCode)
+			var result ErrorResponse
+			require.NoError(t, json.NewDecoder(response.Body).Decode(&result))
+			assert.Equal(t, ErrorResponse{Error: "discovery failed", Message: "timeout"}, result)
+			repo.AssertExpectations(t)
+		})
+	}
 }
 
 func adminDiscoveryRequest(t *testing.T, method, serviceID string, body any) *http.Request {

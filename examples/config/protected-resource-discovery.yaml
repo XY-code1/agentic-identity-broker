@@ -48,5 +48,5 @@ oauth2_authorization_server:
 # The broker generates and stores its private key; do not put key material here.
 # Send discovery.enable_discovery: true and a public HTTPS discovery.resource_url
 # in each service's Admin API create/update request, not in this broker configuration file.
-# Discovery and registration have a fixed shared 15-second attempt deadline.
+# Discovery and registration have a fixed shared 10-second attempt deadline.
 # Each remote discovery or registration response has a fixed 256-KiB limit.

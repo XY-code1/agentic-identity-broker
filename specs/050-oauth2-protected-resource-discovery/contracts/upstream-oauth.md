@@ -13,7 +13,7 @@ Every request in sections 2–4 obeys these rules:
 - In production, the dialer rejects private, loopback, link-local, cloud-metadata, transition, and other blocked addresses after DNS resolution and before TCP connect.
 - The client accepts no redirect.
 - The response body limit is 256 KiB. A larger body fails with `response_too_large`.
-- One discovery or registration attempt has one 15-second deadline across all requests.
+- One discovery or registration attempt has one 10-second deadline across all requests.
 - The broker sends no service credential, user token, cookie, or browser header to a metadata URL.
 - Audit and error data contain only identifiers, request class, outcome, and the failure codes in [admin-api.md](./admin-api.md#41-failure-codes).
 

@@ -80,7 +80,7 @@ info:
     - Metadata URLs **must** use HTTPS
     - URL validation prevents injection attacks
     - Protected-resource discovery and every discovered endpoint require public HTTPS.
-    - Discovery and registration share a 15-second deadline and a 256-KiB cap per response.
+    - Discovery and registration share a 10-second deadline and a 256-KiB cap per response.
     - Discovery and registration use a guarded client without redirects or proxies. It rejects blocked resolved IP addresses before connection.
     - Discovery-backed token calls use a separate guarded client with the configured upstream token timeout, no redirects, and no proxies.
 
@@ -796,7 +796,7 @@ paths:
                     error: conflict
                     message: Service with client_id 'Iv1.1234567890abcdef' already exists
         '504':
-          description: Discovery or registration exceeded the 15-second attempt deadline
+          description: Discovery or registration exceeded the 10-second attempt deadline
           content:
             application/json:
               schema:
@@ -1038,7 +1038,7 @@ paths:
         '428':
           $ref: '#/components/responses/PreconditionRequired'
         '504':
-          description: Discovery or registration exceeded the 15-second attempt deadline
+          description: Discovery or registration exceeded the 10-second attempt deadline
           content:
             application/json:
               schema:

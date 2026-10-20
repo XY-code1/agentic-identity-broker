@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-10-07
-**Acceptance**: The stakeholder accepted ADR 040 on 2026-10-19 in the PR #191 review. The stakeholder approved the API and implementation approach on 2026-10-07, including the optional broker-wide DCR client name and Helm mapping.
+**Acceptance**: The stakeholder accepted ADR 040 on 2026-10-19 in the PR #191 review. The stakeholder approved the API and implementation approach on 2026-10-07, including the optional broker-wide DCR client name and Helm mapping. On 2026-10-20, the stakeholder approved a 10-second discovery attempt deadline in place of 15 seconds.
 **Numbering**: The stakeholder approved this proposal when it was ADR 038. This branch renumbered it to ADR 040 on 2026-10-15 because main assigned ADR 038 to proactive token refresh. The decision did not change.
 
 ## Context
@@ -19,7 +19,9 @@ ADR 015 locates the CIMD fetcher in `internal/adapters/cimd` and its address pol
 
 Move the shared blocked-address value object to `internal/domain/netpolicy`. Move the CIMD fetcher to `internal/adapters/outboundhttp` and share its dial-time address guard with protected-resource discovery and registration. The location change supersedes only ADR 015's package locations. ADR 015's CIMD timeout, response limit, cache, and validation rules remain binding. Do not make an adapter import another adapter.
 
-The guarded transport validates public HTTPS URLs and blocks private resolved addresses before TCP connect. It disables redirects and proxy routing so its dialer checks the destination rather than a proxy. Discovery and registration share one 15-second attempt deadline. Each remote response has a 256-KiB limit. Discovery-backed code exchange and refresh use the guarded transport with the configured token timeout and token response limits. Direct `metadata_url` and manual traffic retain the older shared client, its transport policy, and its fallback behavior. This older client is not the guarded discovery client.
+The guarded transport validates public HTTPS URLs and blocks private resolved addresses before TCP connect. It disables redirects and proxy routing so its dialer checks the destination rather than a proxy. Discovery and registration share one 10-second attempt deadline. Each remote response has a 256-KiB limit. Discovery-backed code exchange and refresh use the guarded transport with the configured token timeout and token response limits. Direct `metadata_url` and manual traffic retain the older shared client, its transport policy, and its fallback behavior. This older client is not the guarded discovery client.
+
+For discovery-backed Admin create and update requests, the handler extends the response write deadline. It allows the 10-second attempt, three configured storage reads, one failure-status write, and five seconds for the response. Other requests retain the server's 15-second write timeout. This response deadline does not change the outbound attempt deadline.
 
 ### Client selection and state
 

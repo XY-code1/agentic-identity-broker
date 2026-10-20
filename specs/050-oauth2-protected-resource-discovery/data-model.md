@@ -78,7 +78,7 @@ The response reads the active `ResourceURL`, `IssuerURI`, and `ClientMethod`. It
 | DCR result | `client_id`, returned redirect URIs, authentication method, optional client secret | Reject missing ID, incompatible callback, missing or mismatched method, missing required secret, or any non-zero `client_secret_expires_at`. An optional `grant_types` response can omit `refresh_token`. Discard unused management credentials. |
 | Hosted CIMD identity | `<server.enduser.public_url>/.well-known/oauth-client/<service-id>` | Reuse the existing ES256 key domain and public document. No DCR call after CIMD selection. |
 
-Each remote fetch and registration response has a 256-KiB limit. The entire attempt has a 15-second deadline. The code rejects redirects, private resolved addresses, non-HTTPS origins, and invalid identity claims before it stores active state.
+Each remote fetch and registration response has a 256-KiB limit. The entire attempt has a 10-second deadline. The code rejects redirects, private resolved addresses, non-HTTPS origins, and invalid identity claims before it stores active state.
 
 The service stores no credential-rotation state. It rejects DCR registrations with non-zero secret expiry before persisting a service. If the provider issues no refresh token or revokes the stored credential, renewal fails without re-registration.
 
