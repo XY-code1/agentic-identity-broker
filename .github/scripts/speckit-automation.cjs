@@ -80,7 +80,10 @@ async function maintainer(github, repo, login) {
 }
 
 function managedPR(pr, repo) {
-  const issue = pr.body?.match(/<!-- speckit-issue: (\d+) -->/);
+  const relatedPrefix = `Related issue: https://github.com/${repo.owner}/${repo.repo}/issues/`;
+  const related = (pr.body || "").split(/\r?\n/).find((line) => line.startsWith(relatedPrefix));
+  const issue = pr.body?.match(/<!-- speckit-issue: (\d+) -->/) ||
+    related?.slice(relatedPrefix.length).match(/^(\d+)$/);
   return pr.state === "open" && pr.draft && issue &&
     pr.head.repo?.full_name === `${repo.owner}/${repo.repo}` &&
     pr.base.repo?.full_name === `${repo.owner}/${repo.repo}` &&
@@ -101,12 +104,28 @@ async function readFile(github, repo, ref, name, optional = false) {
   return Buffer.from(data.content, "base64").toString("utf8");
 }
 
-async function artifacts(github, repo, ref) {
-  const state = JSON.parse(await readFile(github, repo, ref, ".specify/feature.json"));
-  const feature = featurePath(state.feature_directory);
+async function artifacts(github, repo, pr) {
+  const markers = [...(pr.body || "").matchAll(/<!-- speckit-feature: ([^\r\n]*?) -->/g)];
+  if (markers.length > 1) throw new Error("Multiple Spec Kit feature markers");
+  let selected = markers[0]?.[1];
+  if (!selected) {
+    const prefix = `Specification: https://github.com/${repo.owner}/${repo.repo}/blob/${pr.head.ref}/`;
+    const links = (pr.body || "").split(/\r?\n/).filter((line) => line.startsWith(prefix));
+    if (links.length > 1) throw new Error("Multiple Spec Kit specification links");
+    if (links.length) {
+      const target = links[0].slice(prefix.length);
+      if (!target.endsWith("/spec.md")) throw new Error("Invalid Spec Kit specification link");
+      selected = target.slice(0, -"/spec.md".length);
+    }
+  }
+  if (!selected) {
+    const state = JSON.parse(await readFile(github, repo, pr.head.sha, ".specify/feature.json"));
+    selected = state.feature_directory;
+  }
+  const feature = featurePath(selected);
   const files = {};
   for (const name of documents) {
-    const content = await readFile(github, repo, ref, `${feature}/${name}`, name !== "spec.md");
+    const content = await readFile(github, repo, pr.head.sha, `${feature}/${name}`, name !== "spec.md");
     if (content !== null) files[`${feature}/${name}`] = content;
   }
   return { feature, files, hashes: artifactHashes(files) };
@@ -137,7 +156,13 @@ async function route({ github, context }) {
     const existing = await github.paginate(github.rest.pulls.list, {
       ...repo, state: "all", head: `${repo.owner}:speckit/issue-${payload.issue.number}`, per_page: 100,
     });
-    if (existing.length) return { action: "noop" };
+    if (existing.length) {
+      const managed = existing.find((pr) => managedPR(pr, repo) === payload.issue.number);
+      if (!managed || latest(await reports(github, repo, managed.number), ["clarify"])) {
+        return { action: "noop" };
+      }
+      return { action: "clarify", issue: payload.issue.number, pr: managed.number, comment: 0 };
+    }
     return { action: "specify", issue: payload.issue.number, pr: 0, comment: 0 };
   }
   const number = isAnswer ? payload.issue.number : payload.pull_request.number;
@@ -152,7 +177,7 @@ async function route({ github, context }) {
         !payload.comment.body?.trim() || payload.comment.user.login !== context.actor) return { action: "noop" };
     return { action: "clarify", issue, pr: number, comment: payload.comment.id };
   }
-  const current = await artifacts(github, repo, pr.head.sha);
+  const current = await artifacts(github, repo, pr);
   requireResult(latest(entries, ["clarify"])?.result, ["spec.md"], current.hashes);
   if (label === "speckit:implement") {
     const analysis = latest(entries, ["analyze", "reanalyze"])?.result;
@@ -175,7 +200,7 @@ async function prepare({ github, context, inputs }) {
     if (!phases.includes(inputs.phase)) throw new Error("Unsupported Spec Kit phase");
     const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(inputs.pr) });
     if (!managedPR(pr, context.repo)) throw new Error("Only managed, same-repository draft PRs are eligible");
-    const current = await artifacts(github, context.repo, pr.head.sha);
+    const current = await artifacts(github, context.repo, pr);
     const entries = await reports(github, context.repo, pr.number);
     const previous = {
       plan: ["clarify"], tasks: ["plan"], analyze: ["tasks"],
@@ -221,7 +246,7 @@ async function verify({ github, context, comment, phase }) {
   const number = Number(posted.issue_url.split("/").pop());
   const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
   if (!managedPR(pr, context.repo)) throw new Error("Worker result is not on a managed draft PR");
-  const current = await artifacts(github, context.repo, pr.head.sha);
+  const current = await artifacts(github, context.repo, pr);
   if (phase === "clarify" && result.status === "waiting") {
     for (const name of ["spec.md"]) {
       if (result.files[`${result.feature}/${name}`] !== current.hashes[`${result.feature}/${name}`]) {
@@ -278,6 +303,18 @@ function writeResult() {
 module.exports = { artifactHashes, parseResult, route, requireResult, prepare, verify };
 
 if (require.main === module) {
-  if (process.argv[2] !== "result") throw new Error("Expected result command");
-  writeResult();
+  if (process.argv[2] === "select-feature") {
+    const context = JSON.parse(fs.readFileSync(`${directory}/context.json`, "utf8"));
+    const feature = featurePath(context.feature);
+    localFile(`${feature}/spec.md`);
+    if (fs.lstatSync(".specify").isSymbolicLink() ||
+        (fs.existsSync(".specify/feature.json") && fs.lstatSync(".specify/feature.json").isSymbolicLink())) {
+      throw new Error("Feature pointer must not be a symlink");
+    }
+    fs.writeFileSync(".specify/feature.json", `${JSON.stringify({ feature_directory: feature })}\n`);
+  } else if (process.argv[2] === "result") {
+    writeResult();
+  } else {
+    throw new Error("Expected result or select-feature command");
+  }
 }

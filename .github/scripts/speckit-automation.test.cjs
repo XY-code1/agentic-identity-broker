@@ -46,6 +46,7 @@ function fixture(eventName, payload, options = {}) {
     base: { ref: "main", repo: { full_name: "example/broker" } },
     ...options.pr,
   };
+  const contentReads = [];
   const github = {
     rest: {
       repos: {
@@ -53,13 +54,21 @@ function fixture(eventName, payload, options = {}) {
           calls.push(args);
           return { data: { permission: options.permission || "write" } };
         },
-        getContent: async ({ path }) => ({
-          data: { type: "file", encoding: "base64", content: Buffer.from(
-            path === ".specify/feature.json"
-              ? JSON.stringify({ feature_directory: spec })
-              : files[path],
-          ).toString("base64") },
-        }),
+        getContent: async ({ path }) => {
+          contentReads.push(path);
+          if (path === ".specify/feature.json" && options.missingPointer) {
+            const error = new Error("Not found");
+            error.status = 404;
+            throw error;
+          }
+          return {
+            data: { type: "file", encoding: "base64", content: Buffer.from(
+              path === ".specify/feature.json"
+                ? JSON.stringify({ feature_directory: spec })
+                : files[path],
+            ).toString("base64") },
+          };
+        },
       },
       pulls: {
         get: async () => ({ data: pr }),
@@ -74,7 +83,7 @@ function fixture(eventName, payload, options = {}) {
     paginate: async (method, args) => (await method(args)).data,
   };
   return {
-    github, calls,
+    github, calls, contentReads,
     context: { repo, eventName, payload, actor: "maintainer", runId: 100 },
   };
 }
@@ -98,6 +107,35 @@ test("unrelated labels, read-only users, bots, and issue comments do not execute
 test("relabeling a specified issue does not open another PR", async () => {
   const f = fixture("issues", { action: "labeled", label: { name: "speckit:specify" }, issue: { number: 7, state: "open" } }, { existing: [{ number: 42 }] });
   assert.equal((await route(f)).action, "noop");
+});
+
+test("relabeling resumes clarification for an existing managed PR without a clarification result", async () => {
+  const issue = { number: 7, state: "open" };
+  const payload = { action: "labeled", label: { name: "speckit:specify" }, issue };
+  const existing = {
+    number: 42, state: "open", draft: true,
+    body: "<!-- speckit-issue: 7 -->",
+    head: { ref: "speckit/issue-7", repo: { full_name: "example/broker" } },
+    base: { repo: { full_name: "example/broker" } },
+  };
+  const retry = fixture("issues", payload, { existing: [existing] });
+  assert.deepEqual(await route(retry), { action: "clarify", issue: 7, pr: 42, comment: 0 });
+
+  const completed = fixture("issues", payload, {
+    existing: [existing],
+    comments: [comment(result("clarify"))],
+  });
+  assert.equal((await route(completed)).action, "noop");
+
+  const unmanaged = fixture("issues", payload, {
+    existing: [{ ...existing, body: "unmanaged" }],
+  });
+  assert.equal((await route(unmanaged)).action, "noop");
+
+  const visibleLink = fixture("issues", payload, {
+    existing: [{ ...existing, body: "Related issue: https://github.com/example/broker/issues/7" }],
+  });
+  assert.deepEqual(await route(visibleLink), { action: "clarify", issue: 7, pr: 42, comment: 0 });
 });
 
 test("only maintainer comments posted after pending questions become answers", async () => {
@@ -131,6 +169,83 @@ test("planning requires completed clarification for the current specification", 
   await assert.rejects(route(fixture("pull_request_target", payload, { comments: [comment(stale)] })), /changed/i);
   const ready = fixture("pull_request_target", payload, { comments: [comment(result("clarify"))] });
   assert.equal((await route(ready)).action, "plan");
+});
+
+test("PR metadata selects feature artifacts without requiring an ignored pointer", async () => {
+  const payload = { action: "labeled", label: { name: "speckit:plan-execution" }, pull_request: { number: 42 } };
+  const clarification = [comment(result("clarify"))];
+  const markerPR = fixture("pull_request_target", payload, {
+    pr: { body: "<!-- speckit-issue: 7 -->\n<!-- speckit-feature: specs/042-example -->" },
+    comments: clarification,
+    missingPointer: true,
+  });
+  assert.equal((await route(markerPR)).action, "plan");
+  assert(!markerPR.contentReads.includes(".specify/feature.json"));
+
+  const linkPR = fixture("pull_request_target", payload, {
+    pr: { body: "<!-- speckit-issue: 7 -->\nSpecification: https://github.com/example/broker/blob/speckit/issue-7/specs/042-example/spec.md" },
+    comments: clarification,
+    missingPointer: true,
+  });
+  assert.equal((await route(linkPR)).action, "plan");
+  assert(!linkPR.contentReads.includes(".specify/feature.json"));
+});
+
+test("legacy PRs can still resolve a feature from their tracked pointer", async () => {
+  const payload = { action: "labeled", label: { name: "speckit:plan-execution" }, pull_request: { number: 42 } };
+  const f = fixture("pull_request_target", payload, {
+    pr: { body: "<!-- speckit-issue: 7 -->" },
+    comments: [comment(result("clarify"))],
+  });
+  assert.equal((await route(f)).action, "plan");
+  assert(f.contentReads.includes(".specify/feature.json"));
+});
+
+test("invalid and duplicate feature metadata fail closed instead of reading a pointer", async () => {
+  const payload = { action: "labeled", label: { name: "speckit:plan-execution" }, pull_request: { number: 42 } };
+  for (const metadata of [
+    "<!-- speckit-feature: ../../other -->",
+    "<!-- speckit-feature: specs/042-example -->\n<!-- speckit-feature: specs/043-other -->",
+    "Specification: https://github.com/example/broker/blob/speckit/issue-7/../../spec.md",
+  ]) {
+    const f = fixture("pull_request_target", payload, {
+      pr: { body: `<!-- speckit-issue: 7 -->\n${metadata}` },
+      comments: [comment(result("clarify"))],
+    });
+    await assert.rejects(route(f), /feature/i);
+    assert(!f.contentReads.includes(".specify/feature.json"));
+  }
+});
+
+test("select-feature materializes only validated sandbox-local state", () => {
+  const source = fs.readFileSync(require.resolve("./speckit-automation.cjs"), "utf8");
+  const saved = [];
+  let feature = spec;
+  let symlink = false;
+  const io = {
+    readFileSync: (name) => name.endsWith("context.json")
+      ? JSON.stringify({ feature }) : "Specification",
+    lstatSync: () => ({ isSymbolicLink: () => symlink }),
+    existsSync: () => false,
+    writeFileSync: (name, body) => saved.push({ name, body }),
+  };
+  const run = () => {
+    const module = { exports: {} };
+    const load = (name) => name === "node:fs" ? io : require(name);
+    load.main = module;
+    vm.runInNewContext(source, {
+      module, require: load, process: { argv: ["node", "automation.cjs", "select-feature"], cwd: () => "/workspace" },
+    });
+  };
+  run();
+  assert.equal(saved[0].name, ".specify/feature.json");
+  assert.deepEqual(JSON.parse(saved[0].body), { feature_directory: spec });
+  feature = "../../other";
+  assert.throws(run, /Invalid Spec Kit feature/);
+  feature = spec;
+  symlink = true;
+  assert.throws(run, /[Ss]ymlink/);
+  assert.equal(saved.length, 1);
 });
 
 test("implementation fails closed for missing, stale, blocked, or severe analysis", async () => {
