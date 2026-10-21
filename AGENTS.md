@@ -162,6 +162,7 @@ For feature 050 only, the stakeholder accepted ADR 040 on 2026-10-19 in PR #191.
 | 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
 | 038 | `adrs/038-proactive-token-refresh.md` | Background token refresh and operator-driven synchronous session sweep |
 | 039 | `adrs/039-concurrent-session-expiry-index.md` | Named non-atomic migration `037` exception with direct CLI and manual recovery |
+| 040 | `adrs/040-trust-anchor-local-key-sets.md` | Inline and file-based key sets for trust anchors (trust directory, re-read, health) |
 | 040 | `adrs/040-protected-resource-discovery-and-dcr.md` | Protected-resource discovery and DCR client selection |
 
 ## Domain Glossary
@@ -181,6 +182,9 @@ For feature 050 only, the stakeholder accepted ADR 040 on 2026-10-19 in PR #191.
 | **ResourceURI** | Normalized protected-resource URI for RFC 8693 token exchange. |
 | **CEL Expression** | Policy for privileged-client authorization and JWT claim extraction. |
 | **ToolApproval** | Human-in-the-loop authorization for an agent tool call with pending, approved, or denied status. |
+| **Key Set Source** | Origin of one trust anchor's public keys: `remote` (`jwks_uri`, discovery, or ADR 029 reuse), `inline` (`jwks`), or `file` (`jwks_file`). One per trust anchor. Not the JWKS publisher's `KeySource`. |
+| **Local Key Set** | Validated JWK Set from an inline or file Key Set Source: public asymmetric keys only, unique `kid`, at most 1 MiB. Never published. |
+| **Trust Directory** | Directory `security.trust_material_dir`, the only place the broker reads key-set files, opened through `os.Root`. |
 
 ## Development Workflow
 
