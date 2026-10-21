@@ -13,7 +13,7 @@ Every request in sections 2–4 obeys these rules:
 - In production, the dialer rejects private, loopback, link-local, cloud-metadata, transition, and other blocked addresses after DNS resolution and before TCP connect.
 - The client accepts no redirect.
 - The response body limit is 256 KiB. A larger body fails with `response_too_large`.
-- One discovery or registration attempt has one 15-second deadline across all requests.
+- One discovery or registration attempt has one 10-second deadline across all requests.
 - The broker sends no service credential, user token, cookie, or browser header to a metadata URL.
 - Audit and error data contain only identifiers, request class, outcome, and the failure codes in [admin-api.md](./admin-api.md#41-failure-codes).
 
@@ -103,7 +103,7 @@ The broker sends one `POST` with `Content-Type: application/json` to `registrati
   "redirect_uris": [
     "https://broker.example.com/api/third-party/6c84fb90-12c4-11e1-840d-7b25c5ee775a/oauth2/callback"
   ],
-  "client_name": "Example MCP",
+  "client_name": "Example Platform",
   "application_type": "web",
   "grant_types": ["authorization_code", "refresh_token"],
   "response_types": ["code"],
@@ -112,7 +112,7 @@ The broker sends one `POST` with `Content-Type: application/json` to `registrati
 ```
 
 `token_endpoint_auth_method` is the one selected method from section 3.2.
-`client_name` is the administrator-supplied service `display_name`, not a name from the protected resource or authorization server.
+`client_name` is the non-blank deployment-wide `third_party_oauth2.client_name`, not the service `display_name` or a name from the resource. If the setting is absent or blank, DCR stops before registration. Startup, manual services, and hosted CIMD remain available.
 
 ### 4.2 Response validation
 

@@ -198,6 +198,15 @@ and unknown environments reject that development-only bypass.
 | `broker.requestContext.trace.responseEnabled` | Emit the additive W3C `traceresponse` response header | `true` |
 | `extraObjects` | Additional manifests deployed with the release, rendered with `tpl` (see [Extra Objects](#extra-objects)) | `[]` |
 
+### Protected-resource discovery
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `broker.thirdPartyOauth2.clientName` | `string` | `""` | Optional broker or platform name. The chart maps it to `third_party_oauth2.client_name`. DCR requires a non-blank value. Startup, manual services, and hosted CIMD do not. |
+| `broker.server.enduser.publicUrl` | `string` | `""` | The chart maps it to `server.enduser.public_url`. Hosted CIMD and DCR require a stable, public HTTPS URL. DCR uses it for the OAuth2 callback. |
+
+The chart does not configure a service's `discovery.resource_url`. Send that public HTTPS URL in the service's Admin API create or update request.
+
 ### Custom Values File
 
 Create a `values-production.yaml` file:
