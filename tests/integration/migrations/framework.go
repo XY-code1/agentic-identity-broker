@@ -1,7 +1,7 @@
 //go:build integration
 // +build integration
 
-package migrations_test
+package migrations
 
 import (
 	"context"
@@ -70,6 +70,15 @@ func (f *MigrationTestFramework) Cleanup(t *testing.T) {
 	}
 }
 
+func (f *MigrationTestFramework) newMigrationRunner(t *testing.T) (*migrate.Migrate, error) {
+	t.Helper()
+	m, err := migrate.New("file://"+f.migrationsDir, f.connStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create migrate instance: %w", err)
+	}
+	return m, nil
+}
+
 // Up runs migrations up to the specified version.
 func (f *MigrationTestFramework) Up(t *testing.T, targetVersion uint) error {
 	t.Helper()
@@ -77,8 +86,10 @@ func (f *MigrationTestFramework) Up(t *testing.T, targetVersion uint) error {
 	migrationsURL := "file://" + f.migrationsDir
 	t.Logf("Applying migrations up to version %d from: %s", targetVersion, migrationsURL)
 
-	m, err := migrate.New(migrationsURL, f.connStr)
-	require.NoErrorf(t, err, "failed to create migrate instance")
+	m, err := f.newMigrationRunner(t)
+	if err != nil {
+		return err
+	}
 	defer func() { _, _ = m.Close() }()
 
 	if err := m.Migrate(targetVersion); err != nil && err != migrate.ErrNoChange {
@@ -104,8 +115,10 @@ func (f *MigrationTestFramework) UpAll(t *testing.T) error {
 		}
 	}
 
-	m, err := migrate.New(migrationsURL, f.connStr)
-	require.NoErrorf(t, err, "failed to create migrate instance")
+	m, err := f.newMigrationRunner(t)
+	if err != nil {
+		return err
+	}
 	defer func() { _, _ = m.Close() }()
 
 	s, d, err := m.Version()
@@ -130,8 +143,10 @@ func (f *MigrationTestFramework) UpAll(t *testing.T) error {
 func (f *MigrationTestFramework) Down(t *testing.T, targetVersion uint) error {
 	t.Helper()
 
-	m, err := migrate.New("file://"+f.migrationsDir, f.connStr)
-	require.NoErrorf(t, err, "failed to create migrate instance")
+	m, err := f.newMigrationRunner(t)
+	if err != nil {
+		return err
+	}
 	defer func() { _, _ = m.Close() }()
 
 	currentVersion, _, err := m.Version()
@@ -156,8 +171,10 @@ func (f *MigrationTestFramework) DownAll(t *testing.T) error {
 	migrationsURL := "file://" + f.migrationsDir
 	t.Logf("Rolling back all migrations from: %s", migrationsURL)
 
-	m, err := migrate.New(migrationsURL, f.connStr)
-	require.NoErrorf(t, err, "failed to create migrate instance")
+	m, err := f.newMigrationRunner(t)
+	if err != nil {
+		return err
+	}
 	defer func() { _, _ = m.Close() }()
 
 	s, d, err := m.Version()

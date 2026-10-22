@@ -47,6 +47,7 @@ func newTestAuthorizationServiceWithSessions(agentRepo ports.AgentRepository, gr
 }
 
 type MockAgentRepository struct {
+	ports.AgentRepository
 	agents            map[id.AgentID]*storage.Agent
 	byURI             map[string]*storage.Agent
 	getByClientURIErr error
@@ -287,6 +288,7 @@ func (m *MockGrantRepository) CountGrantsReferencingPermissionSet(_ context.Cont
 // behaviour for FindByPrincipalAndService and ListByPrincipal.
 // All other methods are intentionally no-op stubs.
 type MockSessionRepository struct {
+	ports.UserSessionRepository
 	findFunc func(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error)
 	listFunc func(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error)
 }
@@ -638,6 +640,7 @@ func TestService_HandleAuthorization_SessionExpiry(t *testing.T) {
 						ServiceID:             serviceID,
 						TokenType:             "Bearer",
 						RefreshTokenExpiresAt: &expiredAt,
+						AccessTokenExpiresAt:  &expiredAt,
 					}, nil
 				}
 			},
@@ -1460,6 +1463,7 @@ func TestService_HandleAuthorization_MandatoryRequirements(t *testing.T) {
 						ServiceID:             serviceID,
 						Scope:                 []string{"repo", "user:email"},
 						RefreshTokenExpiresAt: &expiredAt,
+						AccessTokenExpiresAt:  &expiredAt,
 					}, nil
 				}
 			},

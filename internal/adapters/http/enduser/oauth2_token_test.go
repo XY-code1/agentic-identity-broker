@@ -101,6 +101,7 @@ func (m *mockMultiAgentVerifier) VerifyAgentIDClaim(ctx context.Context, respons
 // correct agent is selected by configuring the stub with the expected agent.
 // Storage-layer routing (fetching the correct agent by ID) is tested in the storage adapter tests.
 type stubAgentRepo struct {
+	ports.AgentRepository
 	agent *storage.Agent
 	err   error
 }
@@ -1788,6 +1789,7 @@ func (m *oauth2TokenNoopBranchKeyManager) Create(_ context.Context, _ domainencr
 }
 
 type oauth2TokenProviderRepo struct {
+	ports.ThirdpartyOAuth2ProviderRepository
 	seenSC  security.SecurityContext
 	seenOK  bool
 	findErr error
@@ -2271,7 +2273,7 @@ func TestTokenExchangeSuccessObservationContext(t *testing.T) {
 			spans := captureTokenExchangeSpans(t)
 			logs := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
 			handler := &OAuth2TokenHandler{Logger: slog.New(logs)}
-			response := tokenexchange.NewTokenExchangeResponseFull("ACCESS_TOKEN_SENTINEL", "Bearer", tokenexchange.AccessTokenType, "REFRESH_TOKEN_SENTINEL", "SCOPE_SENTINEL", 3600)
+			response := tokenexchange.NewTokenExchangeResponseFull("ACCESS_TOKEN_SENTINEL", "Bearer", tokenexchange.AccessTokenType, "REFRESH_TOKEN_SENTINEL", "SCOPE_SENTINEL", ptr.To(int64(3600)))
 			response.Service = tokenexchange.ServiceRef{ID: serviceID}
 			response.Authorization = test.authorization
 			response.Principal, response.AgentID = "wire-owner@example.com", agentID.String()

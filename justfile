@@ -14,7 +14,7 @@ LDFLAGS := env_var_or_default("LDFLAGS", "-s -w")
 # internally-mirrored/allowed base image (see delivery.yaml).
 BASE_IMAGE := env_var_or_default("BASE_IMAGE", "alpine:3@sha256:5b02b42e375f7426f8d65c3af331ca05d9878f9989230354504e0b9dfd431f60")
 GO_FAST_TEST_PACKAGES := `go list -e ./... | grep -Ev '(/assets/docusaurus/build/|/specs/|/web/node_modules/|/tests/e2e$|/tests/e2e/frontend$|/tests/e2e/extproc$|/tests/integration($|/))' | tr '\n' ' '`
-INTEGRATION_INFRA_TEST_PACKAGES := "./tests/integration/infra/... ./tests/integration/migrations/... ./tests/integration/storage/infra/... ./internal/adapters/storage/postgres/..."
+INTEGRATION_INFRA_TEST_PACKAGES := "./tests/integration/bootstrap/... ./tests/integration/infra/... ./tests/integration/migrations/... ./tests/integration/storage/infra/... ./internal/adapters/storage/postgres/..."
 INTEGRATION_INFRA_PACKAGE_PROCS := env_var_or_default("INTEGRATION_INFRA_PACKAGE_PROCS", "2")
 GINKGO_FRONTEND_PROCS := env_var_or_default("GINKGO_FRONTEND_PROCS", "2")
 E2E_CAPTURE_SCREENSHOTS := env_var_or_default("E2E_CAPTURE_SCREENSHOTS", "false")
@@ -230,11 +230,11 @@ vet:
     @echo "Running go vet..."
     go vet ./...
 
-# Install development tools (air, golangci-lint, go-junit-report)
+# Install development tools (air, golangci-lint, go-junit-report, ginkgo, Playwright, Wireloom)
 install-tools:
     @echo "Installing development tools..."
     @command -v air          > /dev/null || go install github.com/air-verse/air@v1.63.6
-    @golangci-lint --version 2>/dev/null | grep -q "version 2.13.2" || go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+    @golangci-lint --version 2>/dev/null | grep -q "version 2.14.0" || go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
     @go install github.com/jstemmer/go-junit-report/v2@v2.1.0
     @go install github.com/onsi/ginkgo/v2/ginkgo@v2.33.0
     @if [ -d "$HOME/.cache/ms-playwright" ] && [ -n "$(ls -A "$HOME/.cache/ms-playwright" 2>/dev/null)" ] && [ -f "$HOME/.cache/ms-playwright-go/1.62.1/package/cli.js" ]; then \
@@ -242,6 +242,7 @@ install-tools:
     else \
         go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6201.1 install --with-deps; \
     fi
+    @npm ci --prefix tools/wireloom --silent
     @echo "Tools installation complete"
 
 # Setup git hooks for quality checks
@@ -851,6 +852,16 @@ docs-clean:
 # Run markdown linting
 docs-lint:
     npx markdownlint-cli2 "docs/**/*.md"
+
+# Render Wireloom wireframes in spec Markdown to SVG (example: just render-wireframes specs/NNN-name/spec.md)
+render-wireframes +files:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -d tools/wireloom/node_modules/wireloom ]; then
+        echo "Error: wireloom is not installed. Run: just install-tools" >&2
+        exit 1
+    fi
+    node tools/wireloom/render.mjs {{files}}
 
 # Check for broken links
 docs-check-links: docs-build

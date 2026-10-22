@@ -17,9 +17,9 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 )
 
-func TestOPAAuthorizer_RealPolicyNeverExportsRequestOrPolicyText(t *testing.T) {
-	for _, action := range []string{"deny", "input.headers.authorization"} {
-		t.Run(action, func(t *testing.T) {
+func TestOPAAuthorizer_RealPolicyExportsOnlyAuditFields(t *testing.T) {
+	{
+		t.Run("deny", func(t *testing.T) {
 			recorder := tracetest.NewSpanRecorder()
 			provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 			previous := otel.GetTracerProvider()
@@ -30,13 +30,9 @@ func TestOPAAuthorizer_RealPolicyNeverExportsRequestOrPolicyText(t *testing.T) {
 			})
 			var logs bytes.Buffer
 			logger := slog.New(slog.NewJSONHandler(&logs, nil))
-			policyAction := `"deny"`
-			if action != "deny" {
-				policyAction = action
-			}
 			policy := `package aib.extproc.authz
 import rego.v1
-result := {"action": ` + policyAction + `, "reasons": [input.headers.authorization, input.body.secret, input.mcp.tool_name, input.mcp.target_server_name]}
+result := {"action": "deny", "reasons": [input.mcp.tool_name, input.mcp.target_server_name]}
 `
 			authorizer, err := authorization.NewOPAAuthorizer(authzConfig(writePolicy(t, policy)), logger)
 			require.NoError(t, err)
@@ -45,13 +41,13 @@ result := {"action": ` + policyAction + `, "reasons": [input.headers.authorizati
 				"type":    "mcp_type-secret-sentinel",
 				"headers": map[string]any{"authorization": "header-secret-sentinel"},
 				"body":    map[string]any{"secret": "body-secret-sentinel"},
-				"mcp":     map[string]any{"tool_name": "tool-secret-sentinel", "method": "method-secret-sentinel", "target_server_name": "https://host-secret-sentinel.invalid/path-secret-sentinel?token=query-secret-sentinel"},
+				"mcp":     map[string]any{"tool_name": "list_files", "method": "method-secret-sentinel", "target_server_name": "github-mcp"},
 			}
 			decision, err := authorizer.Evaluate(context.Background(), input)
 			require.NoError(t, err)
 			assert.Equal(t, authorization.ActionDeny, decision.Action)
 			require.NotEmpty(t, decision.Reasons, "policy protocol behavior remains unchanged")
-			assert.Contains(t, fmt.Sprint(decision.Reasons), "header-secret-sentinel")
+			assert.Contains(t, fmt.Sprint(decision.Reasons), "list_files")
 			require.NotEmpty(t, logs.String())
 			telemetry := logs.String()
 			spans := recorder.Ended()
@@ -65,10 +61,10 @@ result := {"action": ` + policyAction + `, "reasons": [input.headers.authorizati
 				assert.Equal(t, "deny", attrs["authorization.action"])
 				assert.Equal(t, "unknown", attrs["authorization.method"])
 				assert.Equal(t, "mcp", attrs["authorization.protocol"])
-				assert.NotContains(t, attrs, "authorization.tool_name")
-				assert.NotContains(t, attrs, "authorization.target_server_name")
+				assert.Equal(t, "list_files", attrs["authorization.tool_name"])
+				assert.Equal(t, "github-mcp", attrs["authorization.target_server_name"])
 			}
-			for _, secret := range []string{"type-secret-sentinel", "header-secret-sentinel", "body-secret-sentinel", "tool-secret-sentinel", "method-secret-sentinel", "host-secret-sentinel", "path-secret-sentinel", "query-secret-sentinel"} {
+			for _, secret := range []string{"type-secret-sentinel", "header-secret-sentinel", "body-secret-sentinel", "method-secret-sentinel"} {
 				assert.NotContains(t, telemetry, secret)
 			}
 		})
@@ -99,7 +95,7 @@ func TestOPAAuthorizer_MCPMethodTelemetry(t *testing.T) {
 			authorizer, err := authorization.NewOPAAuthorizer(authzConfig(writePolicy(t, allowAllPolicy)), slog.New(slog.NewJSONHandler(&logs, nil)))
 			require.NoError(t, err)
 			defer authorizer.Stop(context.Background())
-			mcp := map[string]any{"tool_name": "tool-secret-sentinel", "target_server_name": "server-secret-sentinel"}
+			mcp := map[string]any{"tool_name": "list_files", "target_server_name": "github-mcp"}
 			if test.method != "" {
 				mcp["method"] = test.method
 			}
@@ -115,6 +111,8 @@ func TestOPAAuthorizer_MCPMethodTelemetry(t *testing.T) {
 			assert.Equal(t, test.want, audit["method"])
 			assert.Equal(t, "mcp", audit["protocol"])
 			assert.Equal(t, "allow", audit["action"])
+			assert.Equal(t, "list_files", audit["tool_name"])
+			assert.Equal(t, "github-mcp", audit["target_server_name"])
 			assert.Equal(t, "ok", audit["result_code"])
 			spans := recorder.Ended()
 			require.Len(t, spans, 1)
@@ -127,7 +125,7 @@ func TestOPAAuthorizer_MCPMethodTelemetry(t *testing.T) {
 			} else {
 				assert.Equal(t, test.want, attrs["authorization.method"])
 			}
-			for _, secret := range []string{"method-secret-sentinel", "tool-secret-sentinel", "server-secret-sentinel"} {
+			for _, secret := range []string{"method-secret-sentinel"} {
 				assert.NotContains(t, logs.String(), secret)
 				assert.NotContains(t, fmt.Sprint(attrs), secret)
 			}

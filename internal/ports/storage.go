@@ -43,6 +43,14 @@ type StorageTransactionManager interface {
 	Rollback(ctx context.Context) error
 }
 
+// ThirdpartyOAuth2ProviderDiscoveryStatusWriter records a failed discovery
+// attempt without changing the service's active configuration or version.
+type ThirdpartyOAuth2ProviderDiscoveryStatusWriter interface {
+	// RecordDiscoveryFailure rejects a stale version or an attempt no later than
+	// the stored attempt or success. failureCode contains no remote response data.
+	RecordDiscoveryFailure(ctx context.Context, serviceID id.ServiceID, expectedVersion int64, completedAt time.Time, failureCode string) error
+}
+
 // User represents a user entity in the storage layer.
 // Domain entity - does not expose storage implementation details.
 type User struct {
@@ -102,6 +110,8 @@ type UserRepository interface {
 type AgentRepository interface {
 	Create(ctx context.Context, agent *storage.Agent) error
 	Get(ctx context.Context, id id.AgentID) (*storage.Agent, error)
+	// GetByIDs retrieves existing agents once per ID, in requested order; missing IDs are omitted.
+	GetByIDs(ctx context.Context, ids []id.AgentID) ([]*storage.Agent, error)
 	Update(ctx context.Context, agent *storage.Agent) error
 	// Delete reports whether the primary agent row was actually deleted; absence is false, nil.
 	Delete(ctx context.Context, id id.AgentID) (bool, error)
@@ -218,10 +228,16 @@ type UserSessionRepository interface {
 	// Create creates a new user session.
 	// Uses upsert semantics: if session exists for (principal, service_id), replaces tokens.
 	// Returns error if:
-	// - Service ID doesn't exist (StorageError with Kind=NotFound via FK constraint)
+	// - Service ID doesn't exist (StorageError with Kind=NotFound)
+	// - The service's issuer, audience, or discovery source no longer matches the session's expected values (StorageError with Kind=Conflict)
 	// - Storage connection fails (StorageError with Kind=Connection)
 	// - Operation timeout (StorageError with Kind=Timeout)
 	Create(ctx context.Context, session *storage.UserSession) error
+
+	// CreateIfAbsent inserts a first connection without replacing a competing callback's session.
+	// Returns the inserted session or the existing winner.
+	// It returns the same NotFound and Conflict errors as Create.
+	CreateIfAbsent(ctx context.Context, session *storage.UserSession) (*storage.UserSession, error)
 
 	// Get retrieves a session by ID.
 	// Returns StorageError with Kind=NotFound if session not found.
@@ -235,6 +251,12 @@ type UserSessionRepository interface {
 	// Used for user-visible session lists (DELETE /api/third-party/sessions).
 	// Returns empty slice if no sessions exist (not an error).
 	ListByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error)
+
+	// ListSummariesByPrincipal returns session listing metadata, including expired sessions, without encrypted token blobs.
+	ListSummariesByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSessionSummary, error)
+
+	// ListActiveServiceIDsByPrincipal returns service IDs with usable access or refresh credentials.
+	ListActiveServiceIDsByPrincipal(ctx context.Context, principal id.Principal) ([]id.ServiceID, error)
 
 	// ListActiveByPrincipal retrieves only non-expired sessions for a principal.
 	// Used for FR-020 consent submission validation and anyDelegatedSessionExpired checks.
@@ -251,17 +273,43 @@ type UserSessionRepository interface {
 	// Idempotent: safe to delete non-existent session.
 	DeleteByPrincipalAndService(ctx context.Context, principal id.Principal, serviceID id.ServiceID) error
 
-	// CountByService counts sessions referencing a service.
-	// Used to enforce deletion protection (cannot delete service with active sessions).
+	// CountByService counts every session referencing a service, including expired ones.
+	// Used to block deletion, issuer changes, and effective-audience changes.
 	CountByService(ctx context.Context, serviceID id.ServiceID) (int, error)
 }
 
-// UserSessionRefreshRepository serializes a read-modify-write refresh for one session.
-// The callback sees the latest session under a lock; it returns true only when it
-// has replaced the encrypted tokens and the adapter must persist them atomically.
+// UserSessionRefreshRepository serializes a read-modify-write of one session's tokens, used by
+// refresh and by re-connect. The callback sees the latest session under a lock; it returns true
+// only when it has changed the session and the adapter must atomically persist the encrypted
+// tokens, both expiries, token type, scope, encryption context and callback generation.
+// Only a new callback generation may replace the established upstream client identity.
 // A nil session means the principal has no session for that service.
 type UserSessionRefreshRepository interface {
 	WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error)
+}
+
+// UserSessionExpiryRepository lists sessions due for a bounded admin sweep.
+// Sessions without a recorded access-token expiry are never returned.
+type UserSessionExpiryRepository interface {
+	// ListExpiringSessions returns at most limit ciphertext-only sessions with
+	// access_token_expires_at <= threshold, ordered by (expiry, ID).
+	// A cursor with a zero ID starts at the first row and must have a zero expiry.
+	// A cursor with an ID continues strictly after its (expiry, ID) tuple,
+	// including a zero expiry. limit must be in [1, 1000].
+	// No matches return an empty slice and no error. Failures return domain
+	// storage.StorageError values.
+	ListExpiringSessions(ctx context.Context, threshold time.Time, cursor storage.SessionExpiryCursor, limit int) ([]*storage.UserSession, error)
+}
+
+// UserSessionHealthRepository counts stored sessions for session-health metrics.
+// It reads metadata columns only and never returns or decrypts token material.
+type UserSessionHealthRepository interface {
+	// CountSessionsByExpiry groups every stored session by service, by access-token expiry
+	// relative to now and threshold (after threshold; due when after now and at or before
+	// threshold; expired when at or before now; unknown when not recorded), and by whether the
+	// refresh token is present and unexpired at now. Groups with no sessions are omitted.
+	// The caller bounds the query through ctx. Failures return domain storage.StorageError values.
+	CountSessionsByExpiry(ctx context.Context, threshold, now time.Time) ([]storage.SessionExpiryGroup, error)
 }
 
 // PermissionSetRepository defines storage operations for permission set entities.
@@ -311,14 +359,13 @@ type ToolApprovalRepository interface {
 	Consume(ctx context.Context, id id.ApprovalID, consumedAt time.Time) (*storage.ToolApproval, error)
 }
 
-// ToolApprovalQueryRepository defines read-side list queries for tool approvals.
-// Used by the long-poll sync endpoint and the consent management UI.
+// ToolApprovalQueryRepository defines read-side queries for sync, consent, and creation.
 type ToolApprovalQueryRepository interface {
 	// ListAllActive lists all active approvals, optionally filtered by principal and active agent sessions.
 	ListAllActive(ctx context.Context, principalFilter *id.Principal, activeAgentSessionIDs []string) ([]*storage.ToolApproval, error)
 
-	// ListActiveByPrincipalAndAgent lists active approvals for a principal-agent pair.
-	ListActiveByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.ToolApproval, error)
+	// FindPendingByKey returns the active pending approval for its deduplication key, or nil when absent.
+	FindPendingByKey(ctx context.Context, principal id.Principal, agentID id.AgentID, toolName, argumentsHash string) (*storage.ToolApproval, error)
 
 	// ListPermanentByPrincipal lists permanent approvals/denials for a principal.
 	ListPermanentByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.ToolApproval, error)
@@ -423,6 +470,11 @@ type RefreshTokenSessionRepository interface {
 	// Create stores a refresh token session keyed by token signature.
 	Create(ctx context.Context, session *storage.RefreshTokenSession) error
 
+	// CreateSuccessor stores a replacement after MarkUsed consumes its predecessor.
+	// Transactional backends require the same rotation transaction for both calls.
+	// Nontransactional backends atomically reject a missing or revoked predecessor.
+	CreateSuccessor(ctx context.Context, session *storage.RefreshTokenSession, previousSignature string) error
+
 	// FindBySignature retrieves a refresh token session by its signature.
 	FindBySignature(ctx context.Context, signature string) (*storage.RefreshTokenSession, error)
 
@@ -431,6 +483,12 @@ type RefreshTokenSessionRepository interface {
 
 	// RevokeByRequestID revokes all refresh token sessions for a fosite request ID.
 	RevokeByRequestID(ctx context.Context, requestID string) error
+
+	// RevokeByPrincipalAndAgent consumes unused sessions for one principal-agent pair.
+	RevokeByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (int, error)
+
+	// RevokeByAgent consumes all unused sessions for an agent.
+	RevokeByAgent(ctx context.Context, agentID id.AgentID) (int, error)
 
 	// DeleteExpired removes expired refresh token sessions.
 	DeleteExpired(ctx context.Context) (int, error)

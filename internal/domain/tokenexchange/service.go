@@ -374,17 +374,17 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 
 	// Step 12: Build and return RFC 8693 response with permission set IDs (Phase 6 - US4)
 	// Calculate expires_in from session's current access token expiration
-	now := time.Now().UTC()
-	expiresIn := int64(0)
-	if sessionObj.AccessTokenExpiresAt != nil && sessionObj.AccessTokenExpiresAt.After(now) {
-		expiresIn = int64(sessionObj.AccessTokenExpiresAt.Sub(now).Seconds())
+	var expiresIn *int64
+	if sessionObj.AccessTokenExpiresAt != nil {
+		remaining := max(int64(0), int64(time.Until(*sessionObj.AccessTokenExpiresAt).Seconds()))
+		expiresIn = &remaining
 	}
 
 	response := NewTokenExchangeResponseFull(
 		accessToken,
 		sessionObj.TokenType,
-		AccessTokenType, // issued_token_type per RFC 8693
-		"",              // refresh token typically not returned in exchange response per RFC 8693
+		AccessTokenType,
+		"",
 		strings.Join(sessionObj.Scope, " "),
 		expiresIn,
 	)

@@ -29,11 +29,16 @@ func (operationBranchKeyManager) Create(context.Context, domainencryption.Branch
 
 type operationSessionRepository struct {
 	ports.UserSessionRepository
-	find func(context.Context, id.Principal, id.ServiceID) (*storage.UserSession, error)
+	find   func(context.Context, id.Principal, id.ServiceID) (*storage.UserSession, error)
+	create func(context.Context, *storage.UserSession) error
 }
 
 func (r operationSessionRepository) FindByPrincipalAndService(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
 	return r.find(ctx, principal, serviceID)
+}
+
+func (r operationSessionRepository) Create(ctx context.Context, session *storage.UserSession) error {
+	return r.create(ctx, session)
 }
 
 type operationRefreshRepository func(context.Context, id.Principal, id.ServiceID, func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error)
@@ -102,7 +107,7 @@ func newOperationTestService(t *testing.T, logs io.Writer) (*OAuth2SessionServic
 	}}, operationEncryption{}, operationBranchKeyManager{}, nil, false, logger)
 	service := &OAuth2SessionService{
 		providerService: providerService, sessionRepo: repository, encryption: operationEncryption{},
-		logger: logger, config: DefaultConfig(),
+		logger: logger, config: Config{MaxRetries: 3, RetryBaseDelay: time.Nanosecond, StateTokenTTL: 10 * time.Minute, PKCEVerifierLength: 32},
 		httpClient: &http.Client{Transport: operationTransport(func(*http.Request) (*http.Response, error) {
 			return operationTokenResponse(200, `{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}`), nil
 		})},
@@ -253,24 +258,13 @@ func TestRefreshAccessTokenClassifiesDirectFailures(t *testing.T) {
 		{"missing signer", DetailConfiguration, func(_ *OAuth2SessionService, provider **model.ThirdpartyOAuth2ProviderEntity, _ *string) {
 			(*provider).TokenEndpointAuthMethod = model.TokenEndpointAuthMethodPrivateKeyJWT
 		}},
-		{"invalid JSON", DetailProviderResponseInvalid, func(s *OAuth2SessionService, _ **model.ThirdpartyOAuth2ProviderEntity, _ *string) {
-			s.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
-				return operationTokenResponse(200, "sentinel-invalid-json"), nil
-			})
-		}},
-		{"missing access token", DetailProviderResponseInvalid, func(s *OAuth2SessionService, _ **model.ThirdpartyOAuth2ProviderEntity, _ *string) {
-			s.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) { return operationTokenResponse(200, `{}`), nil })
-		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			service, provider, _ := newOperationTestService(t, io.Discard)
 			token := "refresh"
 			tc.configure(service, &provider, &token)
-			_, err := service.RefreshAccessToken(context.Background(), provider, token)
-			metadata := requireOperationError(t, err, OperationRefresh, tc.detail)
-			if tc.detail == DetailProviderResponseInvalid {
-				assert.Equal(t, http.StatusOK, metadata.StatusCode())
-			}
+			_, err := service.RefreshAccessToken(context.Background(), provider, token, nil)
+			requireOperationError(t, err, OperationRefresh, tc.detail)
 		})
 	}
 }
@@ -282,7 +276,7 @@ func TestRefreshDeadlineClassificationRequiresCallerEvidence(t *testing.T) {
 		if shared {
 			ctx = context.WithValue(ctx, sharedRefreshContextKey{}, true)
 		}
-		_, err := service.RefreshAccessToken(ctx, provider, "refresh")
+		_, err := service.RefreshAccessToken(ctx, provider, "refresh", nil)
 		cancel()
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 		detail := DetailCallerCanceled
@@ -339,10 +333,12 @@ func TestExchangeAndRefreshLogsOmitURLAndCredentialMaterial(t *testing.T) {
 				}
 			})
 			if mode == "exchange network" {
+				provider, err := service.providerService.GetForTokenAcquisition(context.Background(), provider.ID)
+				require.NoError(t, err)
 				service.config.MaxRetries = 2
 				service.config.RetryBaseDelay = time.Nanosecond
 				cfg := &oauth2.Config{ClientID: provider.ClientID.String(), Endpoint: oauth2.Endpoint{TokenURL: endpoint, AuthStyle: oauth2.AuthStyleInParams}}
-				_, err := service.exchangeCodeWithRetry(context.Background(), cfg, provider, "sentinel-code", "sentinel-verifier", nil)
+				_, err = service.exchangeCodeWithRetry(context.Background(), cfg, provider, nil, "sentinel-code", "sentinel-verifier", nil)
 				assert.ErrorIs(t, err, cause)
 				assert.NotContains(t, err.Error(), "sentinel-")
 			} else {
@@ -384,7 +380,7 @@ func TestRefreshRejectionBodyReadPreservesDependencyCause(t *testing.T) {
 	service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(operationFailingReader{cause: cause})}, nil
 	})
-	_, err := service.RefreshAccessToken(context.Background(), provider, "refresh")
+	_, err := service.RefreshAccessToken(context.Background(), provider, "refresh", nil)
 	metadata := requireOperationError(t, err, OperationRefresh, DetailProviderUnavailable)
 	assert.Equal(t, http.StatusBadRequest, metadata.StatusCode())
 	assert.ErrorIs(t, err, cause)

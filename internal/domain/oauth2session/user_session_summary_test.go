@@ -43,6 +43,7 @@ func TestUserSessionSummary_WithExpiredSession(t *testing.T) {
 		ID:                    id.NewSessionID(),
 		ServiceID:             id.NewServiceID(),
 		RefreshTokenExpiresAt: &refreshExp,
+		AccessTokenExpiresAt:  &refreshExp,
 	}
 
 	summary := storage.NewUserSessionSummary(session, "GitHub", 0)
@@ -60,6 +61,7 @@ func TestUserSessionSummary_WithExpiredAccessToken(t *testing.T) {
 		ServiceID:             id.NewServiceID(),
 		AccessTokenExpiresAt:  &accessExp,
 		RefreshTokenExpiresAt: &refreshExp,
+		EncryptedRefreshToken: []byte("refresh"),
 	}
 
 	summary := storage.NewUserSessionSummary(session, "GitHub", 2)

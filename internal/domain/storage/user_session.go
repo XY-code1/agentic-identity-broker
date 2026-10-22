@@ -9,13 +9,53 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 )
 
+// SessionExpiryCursor locates the last (expiry, ID) pair returned by a sweep page.
+// A zero ID starts the scan; the expiry may be the zero time.
+type SessionExpiryCursor struct {
+	AccessTokenExpiresAt time.Time
+	ID                   id.SessionID
+}
+
+// AccessExpiryClass places a session's access-token expiry relative to a threshold.
+type AccessExpiryClass string
+
+const (
+	// AccessExpiryUnknown means no access-token expiry is recorded.
+	AccessExpiryUnknown AccessExpiryClass = "unknown"
+	// AccessExpiryAfterThreshold means the expiry is strictly after the threshold.
+	AccessExpiryAfterThreshold AccessExpiryClass = "after_threshold"
+	// AccessExpiryDue means the expiry is after now and at or before the threshold (inclusive, same as AccessTokenExpiresBy).
+	AccessExpiryDue AccessExpiryClass = "due"
+	// AccessExpiryExpired means the expiry is at or before now (the session's access token is no longer usable).
+	AccessExpiryExpired AccessExpiryClass = "expired"
+)
+
+// SessionExpiryGroup counts stored sessions of one service sharing an access-expiry class and
+// refresh usability. Each (ServiceID, AccessExpiry, RefreshUsable) appears at most once per result.
+type SessionExpiryGroup struct {
+	ServiceID    id.ServiceID
+	AccessExpiry AccessExpiryClass
+	// RefreshUsable means a refresh token is present and its expiry is nil or after now (same as CanRefresh).
+	RefreshUsable bool
+	// Count is the number of sessions in this group, > 0.
+	Count int
+}
+
 // UserSession represents an authenticated OAuth2 session between a user and a third-party service.
 // This is an aggregate root - it owns the encrypted tokens and manages session lifecycle.
 // One session per (principal, service_id) pair, enforced by database unique constraint.
 type UserSession struct {
-	ID        id.SessionID `json:"id" db:"id"`
-	Principal id.Principal `json:"principal" db:"principal"`
-	ServiceID id.ServiceID `json:"service_id" db:"service_id"`
+	ID               id.SessionID `json:"id" db:"id"`
+	Principal        id.Principal `json:"principal" db:"principal"`
+	ServiceID        id.ServiceID `json:"service_id" db:"service_id"`
+	CallbackID       string       `json:"-" db:"callback_id"`
+	UpstreamClientID *id.ClientID `json:"-" db:"upstream_client_id"`
+	// ExpectedIssuerURI binds a discovered callback to the issuer that initiated it.
+	// Repositories check this value before storage; they do not persist it.
+	ExpectedIssuerURI string `json:"-" db:"-"`
+	// ExpectedResource is the discovered audience sealed in the callback state.
+	// Repositories check it before insert or upsert; they do not persist it.
+	ExpectedResource string `json:"-" db:"-"`
 
 	// EncryptedAccessToken contains the OAuth2 access token ENCRYPTED by OAuth2SessionService
 	// using envelope encryption with service_id as Additional Authenticated Data (AAD).
@@ -83,6 +123,9 @@ func (s *UserSession) Validate() error {
 	if s.ServiceID.IsZero() {
 		return errors.New("service_id is required")
 	}
+	if s.UpstreamClientID != nil && s.UpstreamClientID.IsZero() {
+		return errors.New("upstream client ID cannot be empty")
+	}
 	if len(s.EncryptedAccessToken) == 0 {
 		return errors.New("encrypted access token is required")
 	}
@@ -92,14 +135,16 @@ func (s *UserSession) Validate() error {
 	return nil
 }
 
-// IsExpired returns true if the session's refresh token has expired.
-// Access token expiration does not mark session as expired (future auto-refresh).
-// Session without refresh token expiration is considered non-expiring.
+// IsExpired reports whether the session has neither usable access nor refresh credentials.
 func (s *UserSession) IsExpired() bool {
-	if s.RefreshTokenExpiresAt == nil {
-		return false // No expiration set
-	}
-	return time.Now().After(*s.RefreshTokenExpiresAt)
+	return !SessionIsUsable(s.AccessTokenExpiresAt, s.RefreshTokenExpiresAt, len(s.EncryptedRefreshToken) > 0)
+}
+
+// SessionIsUsable also evaluates metadata projections without loading encrypted token blobs.
+func SessionIsUsable(accessExpiry, refreshExpiry *time.Time, hasRefreshToken bool) bool {
+	now := time.Now()
+	return accessExpiry == nil || accessExpiry.After(now) ||
+		hasRefreshToken && (refreshExpiry == nil || refreshExpiry.After(now))
 }
 
 // HasValidAccessToken returns true if access token has not expired.
@@ -108,6 +153,12 @@ func (s *UserSession) HasValidAccessToken() bool {
 		return true // No expiration set
 	}
 	return time.Now().Before(*s.AccessTokenExpiresAt)
+}
+
+// AccessTokenExpiresBy reports whether the access token expires at or before t.
+// A session without an access-token expiry is never due for refresh.
+func (s *UserSession) AccessTokenExpiresBy(t time.Time) bool {
+	return s.AccessTokenExpiresAt != nil && !s.AccessTokenExpiresAt.After(t)
 }
 
 // CanRefresh returns true if session has a refresh token that hasn't expired.

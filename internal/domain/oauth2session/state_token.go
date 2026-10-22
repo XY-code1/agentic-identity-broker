@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 )
 
 // OAuth2StateTokenClaims contains the claims embedded in a JWE state token.
@@ -24,12 +25,27 @@ type OAuth2StateTokenClaims struct {
 	// Must match the serviceId path parameter at callback.
 	ServiceID id.ServiceID `json:"service_id"`
 
+	// IssuerURI binds a discovery-backed flow to the selected authorization server.
+	// Manual and direct-metadata flows leave it empty.
+	IssuerURI string `json:"issuer_uri,omitempty"`
+
+	// Resource binds discovered state to the effective token audience.
+	Resource string `json:"resource,omitempty"`
+
+	// UpstreamClientID binds eligible callbacks to their initiating client identity.
+	// Nil denotes a legacy context, not permission to infer the current identity.
+	UpstreamClientID *id.ClientID `json:"upstream_client_id,omitempty"`
+
 	// RedirectURI is where to redirect after flow completes.
 	// Must be same-origin with the authorize request.
 	RedirectURI string `json:"redirect_uri"`
 
 	// ConsentStateID is the optional current-tab selection reference.
 	ConsentStateID string `json:"consent_state_id,omitempty"`
+
+	// SessionID and SessionCallbackID identify the connection observed at authorization.
+	SessionID         id.SessionID `json:"session_id,omitempty"`
+	SessionCallbackID string       `json:"session_callback_id,omitempty"`
 
 	// IssuedAt is when the token was created.
 	IssuedAt time.Time `json:"iat"`
@@ -48,6 +64,12 @@ func (c *OAuth2StateTokenClaims) Validate() error {
 	}
 	if c.ServiceID.IsZero() {
 		return errors.New("service_id is required")
+	}
+	if (c.IssuerURI == "") != (c.Resource == "") {
+		return errors.New("issuer_uri and resource must be provided together")
+	}
+	if c.UpstreamClientID != nil && c.UpstreamClientID.IsZero() {
+		return model.NewCredentialSourceError(model.CredentialSourceReasonIdentityMissing)
 	}
 	if c.RedirectURI == "" {
 		return errors.New("redirect_uri is required")

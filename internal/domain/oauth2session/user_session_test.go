@@ -102,42 +102,6 @@ func TestUserSession_Validate(t *testing.T) {
 	}
 }
 
-func TestUserSession_IsExpired(t *testing.T) {
-	tests := []struct {
-		name    string
-		session *storage.UserSession
-		want    bool
-	}{
-		{
-			name: "no expiration set",
-			session: &storage.UserSession{
-				RefreshTokenExpiresAt: nil,
-			},
-			want: false,
-		},
-		{
-			name: "not expired",
-			session: &storage.UserSession{
-				RefreshTokenExpiresAt: ptrTime(time.Now().Add(24 * time.Hour)),
-			},
-			want: false,
-		},
-		{
-			name: "expired",
-			session: &storage.UserSession{
-				RefreshTokenExpiresAt: ptrTime(time.Now().Add(-1 * time.Hour)),
-			},
-			want: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.session.IsExpired())
-		})
-	}
-}
-
 func TestUserSession_HasValidAccessToken(t *testing.T) {
 	tests := []struct {
 		name    string

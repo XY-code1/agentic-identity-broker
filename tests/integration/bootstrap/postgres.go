@@ -15,15 +15,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
-
-type SQLMigration struct {
-	File    string
-	Version int64
-}
 
 type SharedPostgres struct {
 	container testcontainers.Container
@@ -165,43 +163,59 @@ func (pg *SharedPostgres) SetupDatabaseFromTemplate(
 	return dbName, pg.ConnectionString(dbName), cleanup
 }
 
+func (pg *SharedPostgres) SetupMigratedDatabase(t *testing.T) (string, string, func()) {
+	t.Helper()
+
+	return pg.SetupDatabaseFromTemplate(t, "full_migrations", func(t *testing.T, dbName string) {
+		migrationRunner := pg.newMigrationRunner(t, dbName)
+		defer func() { _, _ = migrationRunner.Close() }()
+		err := migrationRunner.Up()
+		if err != migrate.ErrNoChange {
+			require.NoError(t, err)
+		}
+	})
+}
+
 func (pg *SharedPostgres) ConnectionString(dbName string) string {
 	return fmt.Sprintf("postgres://testuser:testpass@%s:%s/%s?sslmode=disable", pg.host, pg.port, dbName)
 }
 
-func (pg *SharedPostgres) ApplyMigrationsUpTo(t *testing.T, dbName string, migrations []SQLMigration, upTo int) {
+func (pg *SharedPostgres) ApplyMigrationsUpTo(t *testing.T, dbName string, upTo uint) {
 	t.Helper()
 
-	pg.CreateSchemaMigrationsTable(t, dbName)
-	for _, migration := range migrations {
-		if int(migration.Version) > upTo {
-			break
-		}
-		pg.ApplyMigration(t, dbName, migration.File)
-		pg.recordMigrationVersion(t, dbName, migration.Version)
+	migrationRunner := pg.newMigrationRunner(t, dbName)
+	defer func() { _, _ = migrationRunner.Close() }()
+	err := migrationRunner.Migrate(upTo)
+	if err != migrate.ErrNoChange {
+		require.NoError(t, err)
 	}
 }
 
-func (pg *SharedPostgres) CreateSchemaMigrationsTable(t *testing.T, dbName string) {
+func (pg *SharedPostgres) newMigrationRunner(t *testing.T, dbName string) *migrate.Migrate {
 	t.Helper()
-	pg.ExecuteSQL(t, dbName, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			version BIGINT PRIMARY KEY,
-			dirty BOOLEAN NOT NULL DEFAULT FALSE
-		);
-	`)
+
+	migrationRunner, err := migrate.New("file://"+projectMigrationsDir(t), pg.ConnectionString(dbName))
+	require.NoError(t, err)
+	return migrationRunner
 }
 
 func (pg *SharedPostgres) ApplyMigration(t *testing.T, dbName, filename string) {
 	t.Helper()
 
+	pg.applyMigration(t, dbName, projectMigrationsDir(t), filename)
+}
+
+func projectMigrationsDir(t *testing.T) string {
+	t.Helper()
 	projectRoot, err := FindProjectRoot()
 	require.NoError(t, err, "Failed to find project root")
+	return filepath.Join(projectRoot, "migrations")
+}
 
-	migrationPath := filepath.Join(projectRoot, "migrations", filename)
-	data, err := os.ReadFile(migrationPath) // #nosec G304 -- test helper reads repository-owned migration filenames.
+func (pg *SharedPostgres) applyMigration(t *testing.T, dbName, migrationsDir, filename string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(migrationsDir, filename)) // #nosec G304 -- test helper reads repository-owned migration filenames.
 	require.NoErrorf(t, err, "Failed to read migration file %s", filename)
-
 	pg.ExecuteSQL(t, dbName, string(data))
 }
 
@@ -309,14 +323,6 @@ func (pg *SharedPostgres) terminateDatabaseConnections(t *testing.T, dbName stri
 	pg.execPSQL(t, "postgres", "-c", fmt.Sprintf(
 		"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s' AND pid <> pg_backend_pid();",
 		dbName,
-	))
-}
-
-func (pg *SharedPostgres) recordMigrationVersion(t *testing.T, dbName string, version int64) {
-	t.Helper()
-	pg.ExecuteSQL(t, dbName, fmt.Sprintf(
-		"INSERT INTO schema_migrations (version, dirty) VALUES (%d, FALSE) ON CONFLICT DO NOTHING;",
-		version,
 	))
 }
 

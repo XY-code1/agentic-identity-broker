@@ -60,6 +60,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Initialize logger
 	logger := initializeLogger(cfg.Log)
+	slog.SetDefault(logger)
 	logger.Info("Agentic Identity Broker starting",
 		"log_level", cfg.Log.Level,
 		"log_format", cfg.Log.Format)
@@ -104,7 +105,7 @@ func run(cmd *cobra.Command, args []string) error {
 	enduserRouteSetup := func(r chi.Router) {
 		routing.SetupEnduserRoutes(r, application.EnduserHandlers, routing.EnduserRouteConfig{
 			Authentication:               cfg.Server.EndUser.Authentication,
-			JWTAuthenticator:             application.JWTAuthenticator,
+			JWTAuthenticator:             application.EnduserJWTAuthenticator,
 			ApprovalRequestAuthenticator: application.ApprovalRequestAuthenticator,
 			Logger:                       application.Logger,
 			CORS:                         cfg.Server.EndUser.CORS,
@@ -115,13 +116,14 @@ func run(cmd *cobra.Command, args []string) error {
 	// Create server instances with route setup functions
 	adminServer := httpAdapter.NewServer(
 		httpAdapter.ServerConfig{
-			Port:           cfg.Server.Admin.Port,
-			Bind:           cfg.Server.Admin.Bind,
-			PublicURL:      cfg.Server.Admin.PublicURL,
-			Name:           "admin",
-			Telemetry:      cfg.Telemetry,
-			RequestContext: &cfg.RequestContext,
-			Authentication: cfg.Server.Admin.Authentication,
+			Port:             cfg.Server.Admin.Port,
+			Bind:             cfg.Server.Admin.Bind,
+			PublicURL:        cfg.Server.Admin.PublicURL,
+			Name:             "admin",
+			Telemetry:        cfg.Telemetry,
+			RequestContext:   &cfg.RequestContext,
+			Authentication:   cfg.Server.Admin.Authentication,
+			JWTAuthenticator: application.AdminJWTAuthenticator,
 		},
 		adminRouteSetup,
 		application.Logger,
@@ -136,7 +138,7 @@ func run(cmd *cobra.Command, args []string) error {
 			Telemetry:        cfg.Telemetry,
 			RequestContext:   &cfg.RequestContext,
 			Authentication:   cfg.Server.EndUser.Authentication,
-			JWTAuthenticator: application.JWTAuthenticator,
+			JWTAuthenticator: application.EnduserJWTAuthenticator,
 			HealthComponents: application.EnduserHealthComponents,
 		},
 		enduserRouteSetup,
@@ -340,6 +342,7 @@ func displayStartupSummary(loader *config.Loader, cfg interface{}) {
 		displayConfigValue("server.admin.port", fmt.Sprintf("%d", c.Server.Admin.Port), keyToSource["server.admin.port"])
 		displayConfigValue("server.admin.bind", c.Server.Admin.Bind, keyToSource["server.admin.bind"])
 		displayConfigValue("server.shutdown.timeout", c.Server.Shutdown.Timeout.String(), keyToSource["server.shutdown.timeout"])
+		displayConfigValue("security.skip_cimd_ssrf_validation", fmt.Sprintf("%t", c.Security.SkipCIMDSSRFValidation), keyToSource["security.skip_cimd_ssrf_validation"])
 	}
 
 	fmt.Println("\n=== Configuration Sources ===")
@@ -446,6 +449,17 @@ func init() {
 	rootCmd.PersistentFlags().Int("server.admin.port", 0, "admin server port (default: 14000)")
 	rootCmd.PersistentFlags().String("server.admin.bind", "", "admin server bind address (default: ::)")
 	rootCmd.PersistentFlags().Duration("server.shutdown.timeout", 0, "graceful shutdown timeout (default: 30s)")
+
+	// Token refresh configuration flags
+	rootCmd.PersistentFlags().Duration("token_refresh.lookahead_duration", 0, "refresh lookahead duration (default: 5m)")
+	rootCmd.PersistentFlags().Int("token_refresh.background_workers", 0, "maximum concurrent background refreshes (default: 10)")
+	rootCmd.PersistentFlags().Int("token_refresh.sweep.default_page_size", 0, "default session sweep page size (default: 100)")
+	rootCmd.PersistentFlags().String("third_party_oauth2.credential_files", "{}", "JSON object mapping exact service canonical IDs to client_id_file and client_secret_file absolute paths")
+	rootCmd.PersistentFlags().Bool("token_refresh.health_metrics.enabled", false, "publish the oauth2_sessions gauge when telemetry metrics are enabled (default: true)")
+	rootCmd.PersistentFlags().Duration("token_refresh.health_metrics.query_timeout", 0, "session health count query timeout (default: 5s)")
+
+	// Third-party OAuth2 client registration configuration
+	rootCmd.PersistentFlags().String("third_party_oauth2.client_name", "", "broker or platform name for dynamic client registration")
 
 	// Request security-context configuration flags
 	rootCmd.PersistentFlags().Bool("request_context.trusted_proxy.enabled", false, "trust configured forwarded header for client IP derivation")

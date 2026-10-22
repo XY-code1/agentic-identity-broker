@@ -115,7 +115,7 @@ Parsed response from the identity broker's token exchange endpoint.
 | `access_token` | string | Exchanged access token |
 | `token_type` | string | Token type |
 | `issued_token_type` | string | RFC 8693 issued token type |
-| `expires_in` | `*int` | Seconds until token expires; `nil` when absent from response; `0` or negative treated as absent |
+| `expires_in` | `*int` | Remaining whole seconds; `nil` means unknown expiry. Explicit zero or negative lifetime is not cacheable. |
 
 ## State Transitions
 

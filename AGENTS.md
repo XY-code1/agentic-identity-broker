@@ -14,7 +14,7 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 
 `ARCHITECTURE.md` | Source of truth for system design
 `adrs/NNN-*.md` | Binding ADRs — read before implementation (see the ADR index that follows)
-`.specify/memory/constitution.md` | Binding constitution — 13 principles governing all work
+`.specify/memory/constitution.md` | Binding constitution — 14 principles governing all work
 
 ### Section-Specific Agent Context
 
@@ -39,13 +39,16 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 ### API Contracts
 
 `api/enduser/openapi.yaml` | End-user API: consent, OAuth2, sessions, and approvals
-`api/admin/openapi.yaml` | Admin API: agents, services, resources, and permission sets
+`api/admin/openapi.yaml` | Admin API: agents, services, resources, permission sets, and session sweep
 
 ### Specs (Feature Requirements)
 
 `specs/NNN-<name>/spec.md` | Feature requirements + acceptance scenarios
 `specs/NNN-<name>/plan.md` | Implementation approach
 `specs/NNN-<name>/tasks.md` | Trackable task list
+`.specify/templates/overrides/spec-template.md` | Spec template: required sections, including concrete example journeys (Principle XIV)
+`.specify/examples/specification-by-example.md` | Worked example journey and Wireloom render command (Principle XIV)
+`.specify/templates/overrides/tasks-template.md` | Tasks template: mandatory Phase 2 design and Phase N compliance tasks
 
 ### Encryption Deep Reference
 
@@ -72,12 +75,14 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 `migrations/` | PostgreSQL schema migrations
 `mocks/` | Standalone test services and OAuth2 clients
 
-## Constitution (Binding) — 13 Principles
+## Constitution (Binding) — 14 Principles
 
 Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
 
 1. **Security-First** — Fail closed. Do not use bypasses. Never treat signature validation as optional.
-2. **ADRs are Binding** — Treat ADRs as binding. Use `ARCHITECTURE.md` as the source of truth. A deviation requires a superseding ADR.
+2. **ADRs are Binding** — Use `ARCHITECTURE.md` as the source of truth. Follow Principle II
+   for same-PR ADR acceptance and revisions. A merged Accepted ADR requires an Accepted
+   superseding ADR for deviations.
 3. **Library-First Security** — Do not use custom crypto. Use Go `crypto/*`, `golang.org/x/crypto`, or AWS Encryption SDK.
 4. **OpenAPI Transparency** — Define APIs in `api/{enduser,admin}/openapi.yaml` before implementation.
 5. **Domain-Driven Design** — Enforce ubiquitous language. Add new concepts to the `ARCHITECTURE.md` glossary.
@@ -93,12 +98,13 @@ Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
 11. **Design System Compliance** — Use Refined Trust Architecture and WCAG 2.1 AA. Use semantic tokens in `web/src/design-system/`.
 12. **DI via Builder** — Put all wiring in `internal/app/builder.go`. Do not instantiate services in routing.
 13. **E2E Acceptance Tests** — Use a 1:1 specification-to-test mapping in `tests/e2e/`. Test a complete user journey. Do not test one endpoint segment.
+14. **Specification by Example** — In each spec, add concrete user journeys and link them to the Given/When/Then scenarios. Where applicable, show configuration, RFC-style HTTP exchanges, Wireloom wireframes, and decoded JWT claims.
 
 ## Monorepo Structure
 
 | Section | Technology | AGENTS.md |
 |---|---|---|
-| `internal/` | Go 1.27.1 — hexagonal (domain→ports→adapters→app) | `internal/AGENTS.md` |
+| `internal/` | Go 1.27.3 — hexagonal (domain→ports→adapters→app) | `internal/AGENTS.md` |
 | `web/` | React 19 + TypeScript + Vite 7 + Tailwind 4 | `web/AGENTS.md` |
 | `infra/cdk/` | AWS CDK (Go) — KMS, DynamoDB, IAM | `infra/AGENTS.md` |
 | `tests/` | Ginkgo/Gomega (e2e), Go testing (integration) | `tests/AGENTS.md` |
@@ -110,7 +116,15 @@ It can use routing middleware and configuration. Do not let adapters import each
 
 ## ADR Decision Index
 
-Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. Treat a new ADR in the same PR only as a proposal.
+Read relevant ADRs before implementation. You can mark an ADR introduced on this branch as
+Accepted in the same PR. Before the branch merges into `main`, you can revise that ADR in
+the same PR, even after acceptance. The final ADR and code MUST agree before merge.
+After that merge, a change or deviation requires a new Accepted superseding ADR.
+See Principle II in `.specify/memory/constitution.md`.
+
+For feature 029 only, the stakeholder accepted ADRs 038 and 039 on 2026-10-09. On 2026-10-12, the stakeholder amended ADR 039 in this unmerged PR to remove its guard requirement. These same-PR approvals do not apply to other ADRs. On 2026-10-12, the stakeholder approved renumbering ADR 039's migration from `036` to `037` after `main` took version 36.
+
+For feature 050 only, the stakeholder accepted ADR 040 on 2026-10-19 in PR #191. This same-PR approval does not apply to other ADRs.
 
 | ADR | File | Decision |
 |---|---|---|
@@ -146,6 +160,11 @@ Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. 
 | 035 | `adrs/035-root-mounted-spa.md` | Root-mounted SPA (first-class routes; /consent unmounted) |
 | 032 | `adrs/032-impersonation-requires-user-delegation.md` | User delegation required for OAuth2 impersonation |
 | 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
+| 038 | `adrs/038-proactive-token-refresh.md` | Background token refresh and operator-driven synchronous session sweep |
+| 039 | `adrs/039-concurrent-session-expiry-index.md` | Named non-atomic migration `037` exception with direct CLI and manual recovery |
+| 040 | `adrs/040-trust-anchor-local-key-sets.md` | Inline and file-based key sets for trust anchors (trust directory, re-read, health) |
+| 040 | `adrs/040-protected-resource-discovery-and-dcr.md` | Protected-resource discovery and DCR client selection |
+| 041 | `adrs/041-oauth2-client-secret-file-overrides.md` | Explicit stored/filesystem credentials and established client identity |
 
 ## Domain Glossary
 
@@ -164,6 +183,9 @@ Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. 
 | **ResourceURI** | Normalized protected-resource URI for RFC 8693 token exchange. |
 | **CEL Expression** | Policy for privileged-client authorization and JWT claim extraction. |
 | **ToolApproval** | Human-in-the-loop authorization for an agent tool call with pending, approved, or denied status. |
+| **Key Set Source** | Origin of one trust anchor's public keys: `remote` (`jwks_uri`, discovery, or ADR 029 reuse), `inline` (`jwks`), or `file` (`jwks_file`). One per trust anchor. Not the JWKS publisher's `KeySource`. |
+| **Local Key Set** | Validated JWK Set from an inline or file Key Set Source: public asymmetric keys only, unique `kid`, at most 1 MiB. Never published. |
+| **Trust Directory** | Directory `security.trust_material_dir`, the only place the broker reads key-set files, opened through `os.Root`. |
 
 ## Development Workflow
 
@@ -181,6 +203,7 @@ Use `just` as the command runner. Run `just --list` for the full listing.
 | `just test-integration-infra` | Infra-backed integration suites (Docker/Podman required) |
 | `just test-integration-all` | Both integration layers |
 | `just cdk-test` | CDK unit tests |
+| `just render-wireframes <spec.md>` | Render Wireloom wireframes in a spec to SVG (after `just install-tools`) |
 
 **Local validation:** Do not rely only on editor diagnostics. After Go, test, or infrastructure changes, run `just check`. Then run the smallest matching test command.
 
@@ -194,6 +217,7 @@ Use these rules for all monorepo code (Go, TypeScript, CDK):
 - **Match surrounding style** — Keep naming, error handling, and file structure consistent with adjacent code.
 - **Explicit over clever** — Make intent clear without tracing abstractions.
 - **Extend, do not duplicate** — Use an existing mechanism (for example, JWE for ephemeral state). Do not introduce a competing one.
+- **Explicit SQL columns** — List required result columns in SQL queries, including queries in migrations and tests. Do not use `SELECT *`, `table.*`, or `RETURNING *`. Wildcard projections hide data dependencies and couple readers to schema changes. `COUNT(*)` and `EXISTS (SELECT 1 ...)` are permitted.
 
 - **No test-only production APIs** — Put test helpers in `_test.go` or `tests/`. Assert through production APIs.
 
@@ -203,4 +227,4 @@ Use `NNN_description.{up,down}.sql` for migrations in `migrations/`. For large t
 
 ## Active Technologies
 
-Go 1.27.1 | React 19 + TypeScript + Vite 7 + Tailwind 4 | chi v5 | sqlx + pgx v5 | Ginkgo/Gomega | Viper/Cobra | CVA | OpenTelemetry (`otelhttp`, `otelslog`) | `envoyproxy/go-control-plane` | PostgreSQL (prod) + in-memory (dev/test)
+Go 1.27.3 | React 19 + TypeScript + Vite 7 + Tailwind 4 | chi v5 | sqlx + pgx v5 | Ginkgo/Gomega | Viper/Cobra | CVA | OpenTelemetry (`otelhttp`, `otelslog`) | `envoyproxy/go-control-plane` | PostgreSQL (prod) + in-memory (dev/test)

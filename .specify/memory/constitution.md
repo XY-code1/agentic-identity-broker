@@ -1,32 +1,3 @@
-<!--
-Sync Impact Report
-==================
-Version Change: 2.0.0 → 2.1.0
-Rationale: MINOR — Principle XI adds centralized semantic tokens, light/dark accessibility
-  checks, brand-asset self-hosting, and ADR review of visual-direction changes while removing
-  the prescribed aesthetic. The principle and its design-system process remain in place.
-
-Modified Principles:
-  - XI. Design System Compliance & Consistency → XI. Design System Compliance & Consistency:
-    replaced aesthetic mandates with process requirements.
-
-Added Sections: None
-Removed Sections: None
-
-Version History:
-- 2.0.0 → 2.1.0: Replaced Principle XI aesthetic mandates with token, theme, asset, accessibility, and ADR requirements (MINOR)
-- 1.9.1 → 2.0.0: Scoped Helm changes to workloads deployed by the broker chart (MAJOR)
-- 1.9.0 → 1.9.1: Clarified the bounded ADR 031 exception in Principle I (PATCH)
-- 1.8.0 → 1.8.1: Clarified red phase rules in Principles VIII and XIII (PATCH)
-- 1.7.1 → 1.8.0: Added Helm chart requirement (Principle VII) + frontend Playwright E2E (MINOR)
-- 1.7.0 → 1.7.1: Clarified red phase requirements in Principle VIII (PATCH)
-- 1.6.0 → 1.7.0: Added Principle XIII (E2E Acceptance Testing) + expanded Principle VIII (MINOR)
-- 1.5.1 → 1.6.0: Added Principle XII (Dependency Injection & Component Wiring) (MINOR)
-- 1.5.0 → 1.5.1: Clarified testing requirements in tasks-template.md (PATCH)
-
-Follow-up TODOs: Review dependent references in `specs/047-redesign-consent-console/plan.md`.
--->
-
 # Agentic Identity Broker Constitution
 
 ## Core Principles
@@ -63,12 +34,22 @@ Architecture and major decisions MUST be documented, and Architecture Decision R
 - Major architectural decisions MUST be recorded in [adrs/](adrs/) directory as Architecture Decision Records
 - ADR files MUST follow the format `NNN-decision-title.md` (e.g., `001-hexagonal-architecture.md`)
 - ADRs MUST include: Context, Decision, Consequences, Status (Proposed/Accepted/Deprecated/Superseded)
-- **ADRs with status "Accepted" are BINDING**: all code MUST follow patterns and decisions documented in accepted ADRs
-- Deviation from accepted ADRs is NOT permitted without creating a new superseding ADR
+- An ADR introduced on the current branch MAY have status "Accepted" and be approved in
+  that same PR; a separate PR or prior merge is not required
+- Before its introducing branch merges into main, an ADR introduced on that branch MAY be
+  revised in that same branch/PR, even if Accepted, without a superseding ADR; the final
+  accepted decision and implementation MUST agree before merge
+- Once an Accepted ADR's introducing branch has merged into main, the ADR is BINDING: code
+  MUST follow its decisions, and the ADR MUST NOT be amended in place or deviated from
+  without a new accepted superseding ADR
+- A superseding ADR MAY be introduced and accepted in the same PR as the authorized change
 - When an ADR establishes a pattern (e.g., interface design, library choice, architectural pattern), that pattern MUST be followed consistently across the codebase
 - ADRs supersede ad-hoc implementation choices: if an ADR exists for a domain (e.g., ADR 004 for storage), implementers MUST follow it
 
-**Rationale**: Agents and developers require rapid, accurate understanding of architectural constraints to contribute effectively and maintain consistency across the system. Making ADRs binding (not merely advisory) prevents architectural drift, ensures pattern consistency, and makes architectural governance explicit and enforceable.
+**Rationale**: Agents and developers require rapid, accurate understanding of architectural
+constraints to maintain consistency. Protecting Accepted ADRs already merged into main prevents
+architectural drift, while allowing revisions before an ADR's first merge keeps its reviewed
+decision aligned with the implementation without needless supersession records.
 
 **Example**: ADR 004 (Storage Layer Architecture) establishes interface segregation, sqlx for PostgreSQL, and specific error handling patterns. Any new storage-backed entity must follow these decisions, not introduce alternative approaches.
 
@@ -110,7 +91,6 @@ and API contracts are binding commitments to consumers.
   (https://opensource.zalando.com/restful-api-guidelines/)
 - API design decisions (e.g., naming conventions, error response format, pagination strategy) MUST be
   documented in [ARCHITECTURE.md](../../ARCHITECTURE.md) or via ADR
-- Breaking API changes MUST be documented in [docs/changelog.md](docs/changelog.md)
 
 **Rationale**: APIs are contracts with consumers. Explicit OpenAPI documentation in designated locations
 ensures clients can discover, understand, and implement integrations correctly. Designing APIs before
@@ -467,12 +447,76 @@ documentation of UI states, making regressions immediately visible during review
 4. Verify test fails before button is implemented (semantic red phase)
 5. Implement button, verify test turns green
 
+### XIV. Specification by Example & Reviewable Journeys
+
+Feature specifications MUST make intended behavior reviewable through concrete examples, not only
+abstract requirements or Given/When/Then acceptance scenarios.
+
+**Rules**:
+- Every new or amended `specs/<feature>/spec.md` MUST include at least one chronological,
+  end-to-end example user journey for each distinct user-facing flow. Show the actors, initial
+  state, actions, and observable outcomes with consistent, representative sample values. Link
+  each journey to its Given/When/Then acceptance scenarios; examples MUST NOT replace those
+  scenarios or the 1:1 E2E test mapping required by Principle XIII.
+- Where configuration affects the journey, the spec MUST include a minimal example configuration
+  snippet with the relevant real key names and sample values, and show its effect on the outcome.
+- Where HTTP interactions occur, the spec MUST show relevant RFC-style request and response pairs:
+  method and target, applicable headers and request body, response status, applicable headers
+  and response body. Parameters MAY be abbreviated with `...` only where their values are clear
+  from context and immaterial to the behavior; security-critical inputs and observable outcomes
+  MUST remain explicit. Examples MUST agree with the applicable OpenAPI contract.
+- For UI changes, the spec MUST include an ordered wireframe sequence generated with
+  [Wireloom](https://github.com/StardockCorp/Wireloom). Authors MUST follow its
+  [agent authoring guide](https://github.com/StardockCorp/Wireloom/blob/main/AGENTS.md),
+  retain editable `wireloom` source and rendered SVGs for review, label meaningful before/after
+  states, and identify the user action connecting each state.
+- When an example outputs a JWT, the spec MUST display its decoded claims alongside a synthetic
+  token marker. Show the issuer, subject, audience, expiration, and behavior-driving claims
+  where applicable, so a reviewer can assess the resulting authorization. Examples MUST NOT
+  contain real tokens, credentials, or other secrets.
+
+**Rationale**: Concrete journeys let reviewers follow a feature from its setup through actual
+interactions and visible results. They expose gaps between requirements, API contracts, UI
+states, and security claims before implementation without replacing testable acceptance scenarios.
+
 ## Development Requirements
+
+### Feature Scope & Deferred Findings
+
+Feature planning, tasks, implementation, and review MUST stay within the approved feature scope.
+Work is in scope only when required by the feature's specification or acceptance scenarios, or
+necessary to make the affected path functional, secure, and compliant with this constitution and
+accepted ADRs. Required tests, integration, documentation, and deployment changes are in scope.
+
+**Rules**:
+- Each planned task MUST be traceable to an approved requirement, acceptance scenario, or binding
+  constraint applicable to the feature. Planners and implementers MUST NOT add improvements merely
+  because they are useful independently of the feature.
+- Unrelated refactoring, code-smell fixes, speculative security hardening, telemetry cleanup, and
+  Helm chart enhancements MUST NOT be bundled into a feature, even when discovered during its work.
+- If a finding prevents safe or compliant delivery of the affected feature path, the minimum
+  necessary correction MUST be made as part of the feature. If that cannot be done while meeting
+  binding security or architectural rules, implementation MUST STOP and the conflict MUST be
+  escalated; scope discipline MUST NOT be used to waive those rules.
+- For actionable findings outside the feature's required work, including suspected security
+  issues, refactoring opportunities, code smells, inconsistencies, and violations of accepted
+  ADRs or prior specifications, implementers MUST describe the finding and ask the user whether
+  to file a GitHub issue. They MUST NOT implement the unrelated change or create an issue without
+  the user's affirmative decision. If affirmed, they MUST create the issue and record its link
+  as future work in the feature's planning or implementation record, not as an implementation
+  task for this feature.
+- Expanding the approved feature scope requires explicit user approval and a corresponding
+  specification and task update before implementation; it cannot override binding controls.
+
+**Rationale**: Separating necessary work from independently worthwhile improvements prevents
+feature drift and keeps reviews tied to approved outcomes. User-approved issues preserve
+unrelated findings without silently enlarging the feature.
 
 ### Compliance Checklist
 
 **PRECONDITIONS (must complete BEFORE implementation begins)**:
 
+- [ ] Every planned task traces to the approved feature scope or an applicable binding constraint
 - [ ] Domain model designed: all entities, aggregates, and value objects identified and documented
 - [ ] Domain concepts added to [ARCHITECTURE.md](../../ARCHITECTURE.md) Glossary section
 - [ ] Configuration requirements designed: example YAML snippets showing all new config options
@@ -482,6 +526,9 @@ documentation of UI states, making regressions immediately visible during review
 - [ ] Database schema designed (migration files and SQL documented, or confirm no DB changes)
 - [ ] Frontend components designed: review [web/src/design-system/docs/INDEX.md](../web/src/design-system/docs/INDEX.md) and ensure design system can be used
 - [ ] Universal components identified: plan to add them to design system in `web/src/design-system/components/` (if applicable)
+- [ ] Spec contains linked example user journeys alongside Given/When/Then scenarios, with
+      applicable configuration, HTTP exchanges, Wireloom UI sequences, and visible JWT claims
+      (Principle XIV)
 - [ ] **E2E acceptance tests written in `tests/e2e/` for all spec scenarios (Principle XIII)**
 - [ ] **E2E tests compile successfully and fail semantically before implementation (red phase — detailed
       expectations written and failing, not placeholder assertions — Principle XIII)**
@@ -490,10 +537,12 @@ documentation of UI states, making regressions immediately visible during review
 
 **Implementation Phase**:
 
+- [ ] Unrelated findings are excluded from implementation; approved GitHub issues are linked as future work only
 - [ ] Security controls are enabled by default and fail closed
 - [ ] [ARCHITECTURE.md](../../ARCHITECTURE.md) reflects architectural changes (if any)
 - [ ] Major decisions recorded in [adrs/](adrs/) with correct numbering
-- [ ] Code follows patterns established in accepted ADRs (especially ADR 004 for persistence)
+- [ ] Code follows accepted ADRs already merged into main and final accepted ADRs introduced
+      in this PR (especially ADR 004 for persistence)
 - [ ] APIs implemented exactly as documented in OpenAPI specification
 - [ ] End-user API documentation in [docs/api/](docs/api/) with examples (if applicable)
 - [ ] Configuration implementation uses the configuration system owned by its deployable application; a standalone configuration path requires an accepted ADR
@@ -526,13 +575,15 @@ documentation of UI states, making regressions immediately visible during review
 
 ### When Constraints Cannot Be Met
 
-If Principle II (Binding ADRs) requires deviation:
+If Principle II requires deviation from an Accepted ADR whose introducing branch has already
+merged into main:
 
 1. STOP implementation immediately
 2. Document why the accepted ADR pattern cannot be followed
 3. Draft a new ADR proposing an alternative approach with rationale
-4. Mark the new ADR as superseding the previous ADR
-5. Do NOT implement the deviation without an accepted superseding ADR
+4. Mark the new ADR as superseding the previous ADR; do NOT amend the main-merged ADR in place
+5. Do NOT implement the deviation without an accepted superseding ADR, which MAY be accepted
+   in the same PR as the authorized change
 
 If Principle III (Library-First Security) cannot be satisfied:
 
@@ -608,7 +659,7 @@ If Principle XIII (End-to-End Acceptance Testing & Spec Traceability) cannot be 
 1. Propose amendment via PR to [.specify/memory/constitution.md](.specify/memory/constitution.md)
 2. Include rationale, impacted templates, and migration plan
 3. Increment CONSTITUTION_VERSION per semantic versioning rules
-4. Update Sync Impact Report with changes
+4. Prepare or update a temporary Sync Impact Report describing the amendment for review; remove it before committing the amended constitution.
 5. Propagate changes to dependent templates and documentation
 
 ### Versioning Policy
@@ -621,7 +672,11 @@ If Principle XIII (End-to-End Acceptance Testing & Spec Traceability) cannot be 
 
 - All PRs MUST verify compliance with this constitution
 - Reviewers MUST challenge complexity and request justification when principles are violated
-- Reviewers MUST verify adherence to accepted ADRs (Principle II)
+- Reviewers MUST verify that changed work is required by the approved feature or an applicable
+  binding constraint, and that unrelated findings are tracked only with user-approved issue links
+- Reviewers MUST verify that code follows Accepted ADRs already merged into main and the
+  final versions of Accepted ADRs introduced in the PR; deviations from main-merged ADRs
+  MUST have an accepted superseding ADR (Principle II)
 - Reviewers MUST verify persistence implementations follow quickstart.md patterns (Principle IX)
 - Reviewers MUST verify database migrations use go-migrate naming and are tested (Principle IX)
 - Reviewers MUST verify API changes have user confirmation (Principle X)
@@ -630,6 +685,9 @@ If Principle XIII (End-to-End Acceptance Testing & Spec Traceability) cannot be 
 - Reviewers MUST verify dependency injection uses Builder pattern and routing functions are thin (Principle XII)
 - Reviewers MUST verify TDD was followed: tests written first, compiled successfully, and failed semantically
   before implementation — with detailed expectations, not placeholder assertions (Principle VIII)
+- Reviewers MUST follow the spec's example journeys and verify that applicable configuration,
+  HTTP exchanges, Wireloom UI states, and output JWT claims match requirements and contracts
+  without exposing real secrets (Principle XIV)
 - Reviewers MUST verify E2E tests exist for all spec scenarios and changed minimally during implementation (Principle XIII)
 - Reviewers MUST verify E2E tests failed semantically in red phase: detailed expectations present and
   failing, not trivial always-fail placeholders (Principle XIII)
@@ -649,7 +707,8 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
    - Phase 2c: API Design (Principles IV, X)
    - Phase 2d: Database Design (Principle IX)
    - Phase 2e: Frontend/Design System Review (Principle XI, if applicable)
-   - Phase 2f: E2E Acceptance Test Design (Principle XIII) — includes frontend Playwright tasks if UI changes
+   - Phase 2f: E2E Acceptance Test Design (Principles XIII, XIV) — includes review of concrete
+     spec journeys and frontend Playwright tasks if UI changes
 
 2. **Phase N: Constitution Compliance Verification** - Constitution Implementation Phase checklist
    - Design Phase Verification tasks
@@ -657,9 +716,9 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
    - All verification tasks with explicit principle references
 
 **OPTIONAL PHASES** (include when applicable — omit when not needed):
-- **Phase 0: Pre-implementation Refactoring** — include when the feature requires significant changes
-  to existing code (rename, restructure, extract interfaces, split files). MUST be submitted as a
-  separate PR from feature work. All existing tests MUST pass after refactoring.
+- **Phase 0: Pre-implementation Refactoring** — include only when the approved feature requires
+  significant changes to existing code (rename, restructure, extract interfaces, split files).
+  MUST be submitted as a separate PR from feature work. All existing tests MUST pass afterward.
 - **Phase 2.7: Entity Boilerplate** — include when the feature introduces new domain entities
   requiring new ports, storage adapters, and HTTP handlers. Creates empty-but-compiling CRUD
   scaffolding (handlers returning 501, empty repository methods) as a separate PR before business
@@ -669,11 +728,13 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 - Phase 1: Setup (project-specific initialization)
 - Phase 2.5: Foundational Infrastructure (feature-specific foundation)
 - Phase 3+: User Stories (based on spec.md user stories)
-- Additional Polish (optional improvements)
+- Feature-specific finishing work required for approved acceptance criteria (if applicable)
 
 **Enforcement**:
 - AI agents generating tasks.md MUST retain Phase 2 and Phase N sections verbatim (adapting only task descriptions to the specific feature)
 - The tasks-template.md uses 🔒 emoji and [MANDATORY] markers to clearly distinguish mandatory from customizable sections
 - Omitting mandatory sections violates this constitution and blocks feature completion
+- Tasks MUST NOT include unrelated remediation or optional improvements; user-approved issue
+  links MAY be recorded as future work, not as tasks for the current feature
 
-**Version**: 2.1.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-09-25
+**Version**: 4.2.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-10-15

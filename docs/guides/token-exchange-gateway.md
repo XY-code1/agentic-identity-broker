@@ -118,7 +118,7 @@ Successful metric observations use `none` for failure stage and detail. Successf
 
 Telemetry excludes resource paths, endpoint URLs, broker descriptions, nested errors, credentials, request headers and bodies, and process command arguments.
 Outbound spans preserve trace propagation and the real network request without recording these values.
-OPA audit data uses bounded actions, result codes, protocols, and allowlisted MCP methods. It excludes policy reasons and request-derived tool or server names.
+OPA audit data uses bounded actions, result codes, protocols, and allowlisted MCP methods. It also includes policy reasons, tool names, and target server names.
 Direct protocol recovery responses still contain the recovery URI. Recovery telemetry values do not instruct ExtProc to retry automatically.
 
 
@@ -165,7 +165,7 @@ Key sidecar settings follow:
 - **`oauth2.token_endpoint`** — The broker `/oauth2/token` endpoint. The sidecar sends each exchange to this endpoint.
 - **`oauth2.issuer`**, **`client_id`**, and **`client_secret`** — The sidecar obtains a client assertion through the upstream client-credentials grant. It refreshes the assertion in the background.
 - **`oauth2.tls.allow_http`** — Keep this value `false`. The token endpoint and issuer use `https` unless you explicitly allow HTTP for local development.
-- **`cache.default_ttl` / `cache.max_ttl`** — These values limit cache lifetime. The sidecar derives lifetime from the exchange response `expires_in`. It uses `default_ttl` when the response omits that value, then limits it to `max_ttl`.
+- **`cache.default_ttl` / `cache.max_ttl`** — The sidecar uses `default_ttl` only for absent or null `expires_in`. Explicit zero or negative lifetime is not cacheable. Positive lifetime uses a fresh-cache margin of `max(10s, 10% of lifetime)`, limited to half the lifetime. `max_ttl` caps all cache use. During transient outages, a previously cached token can remain available until reported lifetime plus five seconds, within that cap. This fallback can serve past reported expiry; the fresh-cache margin does not guarantee validity in transit.
 
 Inject the client secret through the environment. Do not commit it. The sidecar redacts sensitive values from logs.
 

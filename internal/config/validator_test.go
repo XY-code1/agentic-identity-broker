@@ -11,6 +11,15 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
+func validTokenRefreshConfig() ports.TokenRefreshConfig {
+	return ports.TokenRefreshConfig{
+		LookaheadDuration: 5 * time.Minute,
+		BackgroundWorkers: 10,
+		Sweep:             ports.TokenRefreshSweepConfig{DefaultPageSize: 100},
+		HealthMetrics:     ports.TokenRefreshHealthMetricsConfig{Enabled: true, QueryTimeout: 5 * time.Second},
+	}
+}
+
 // validTestConfig returns a valid Config for testing with all required fields set.
 func validTestConfig() *ports.Config {
 	return &ports.Config{
@@ -72,7 +81,8 @@ func validTestConfig() *ports.Config {
 				ResponseEnabled: true,
 			},
 		},
-		Security: ports.SecurityConfig{},
+		Security:     ports.SecurityConfig{},
+		TokenRefresh: validTokenRefreshConfig(),
 	}
 }
 
@@ -953,5 +963,104 @@ func TestValidate_WithRequestContextConfig(t *testing.T) {
 		t.Errorf("Validate() error type = %T, want *config.ConfigError", err)
 	} else if configErr.Field != "request_context.trusted_proxy.forwarded_header" {
 		t.Errorf("Validate() error field = %q, want %q", configErr.Field, "request_context.trusted_proxy.forwarded_header")
+	}
+}
+
+func TestValidateTokenRefreshConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		lookahead time.Duration
+		workers   int
+		pageSize  int
+		wantField string
+		wantBound string
+	}{
+		{name: "default values", lookahead: 5 * time.Minute, workers: 10, pageSize: 100},
+		{name: "minimum values", lookahead: time.Nanosecond, workers: 1, pageSize: 1},
+		{name: "maximum worker and page limits", lookahead: time.Hour, workers: 20, pageSize: 1000},
+		{name: "zero lookahead", lookahead: 0, workers: 10, pageSize: 100, wantField: "token_refresh.lookahead_duration", wantBound: "greater than 0"},
+		{name: "negative lookahead", lookahead: -time.Second, workers: 10, pageSize: 100, wantField: "token_refresh.lookahead_duration", wantBound: "greater than 0"},
+		{name: "zero workers", lookahead: 5 * time.Minute, workers: 0, pageSize: 100, wantField: "token_refresh.background_workers", wantBound: "1 and 20"},
+		{name: "too many workers", lookahead: 5 * time.Minute, workers: 21, pageSize: 100, wantField: "token_refresh.background_workers", wantBound: "1 and 20"},
+		{name: "zero page size", lookahead: 5 * time.Minute, workers: 10, pageSize: 0, wantField: "token_refresh.sweep.default_page_size", wantBound: "1 and 1000"},
+		{name: "page size exceeds limit", lookahead: 5 * time.Minute, workers: 10, pageSize: 1001, wantField: "token_refresh.sweep.default_page_size", wantBound: "1 and 1000"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			cfg.TokenRefresh = ports.TokenRefreshConfig{
+				LookaheadDuration: tt.lookahead,
+				BackgroundWorkers: tt.workers,
+				Sweep:             ports.TokenRefreshSweepConfig{DefaultPageSize: tt.pageSize},
+				HealthMetrics:     validTokenRefreshConfig().HealthMetrics,
+			}
+			err := Validate(cfg)
+			if tt.wantField == "" {
+				if err != nil {
+					t.Fatalf("valid token_refresh config rejected: %v", err)
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("expected %s validation error", tt.wantField)
+			}
+			configErr, ok := err.(*config.ConfigError)
+			if !ok {
+				t.Fatalf("validation error type = %T, want *config.ConfigError: %v", err, err)
+			}
+			if configErr.Field != tt.wantField {
+				t.Errorf("validation field = %q, want %q", configErr.Field, tt.wantField)
+			}
+			if !strings.Contains(err.Error(), tt.wantBound) {
+				t.Errorf("validation error %q does not explain bound %q", err, tt.wantBound)
+			}
+			if tt.wantField == "token_refresh.background_workers" {
+				for _, detail := range []string{"connection", "25", "20"} {
+					if !strings.Contains(err.Error(), detail) {
+						t.Errorf("worker validation error %q omits pool rationale %q", err, detail)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestValidateTokenRefreshHealthMetricsConfig(t *testing.T) {
+	tests := []struct {
+		name         string
+		enabled      bool
+		queryTimeout time.Duration
+		wantErr      bool
+	}{
+		{name: "default", enabled: true, queryTimeout: 5 * time.Second},
+		{name: "disabled with positive timeout", enabled: false, queryTimeout: time.Millisecond},
+		{name: "zero timeout", enabled: true, queryTimeout: 0, wantErr: true},
+		{name: "negative timeout", enabled: false, queryTimeout: -time.Second, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			cfg.TokenRefresh.HealthMetrics = ports.TokenRefreshHealthMetricsConfig{Enabled: tt.enabled, QueryTimeout: tt.queryTimeout}
+			err := Validate(cfg)
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("valid health_metrics config rejected: %v", err)
+				}
+				return
+			}
+			configErr, ok := err.(*config.ConfigError)
+			if !ok {
+				t.Fatalf("validation error type = %T, want *config.ConfigError: %v", err, err)
+			}
+			if configErr.Field != "token_refresh.health_metrics.query_timeout" {
+				t.Errorf("validation field = %q, want token_refresh.health_metrics.query_timeout", configErr.Field)
+			}
+			if !strings.Contains(err.Error(), "greater than 0") {
+				t.Errorf("validation error %q does not explain bound", err)
+			}
+		})
 	}
 }

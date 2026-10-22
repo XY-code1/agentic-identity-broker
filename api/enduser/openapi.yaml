@@ -143,7 +143,14 @@ paths:
         - `shutting_down`: Graceful shutdown in progress, completing in-flight requests
         - `unhealthy`: Server encountered an error and requires restart
 
-        In proxy and hybrid OAuth2 modes, the response may also include component-level health in `components`. The `upstream_jwks` component reports `healthy` or `degraded` without changing the top-level server lifecycle status.
+        The response may also include component-level health in `components`. Components report
+        `healthy` or `degraded` and never change the HTTP status or the top-level `status`.
+
+        - `upstream_jwks` (proxy and hybrid modes): freshness of the upstream key set that the broker
+          republishes.
+        - `trust_anchor_key_files` (any mode, when a trust anchor uses `jwks_file`): `degraded` when the
+          latest re-read of any key-set file failed. The broker keeps verifying with the last valid key set
+          until that trust anchor's maximum refresh interval expires.
       operationId: getHealth
       tags:
         - Health
@@ -170,6 +177,14 @@ paths:
                     uptime_seconds: 3600
                     components:
                       upstream_jwks: degraded
+                healthyWithDegradedKeySetFile:
+                  summary: Healthy server with a key-set file that failed its latest re-read
+                  value:
+                    status: healthy
+                    timestamp: "2026-10-16T10:15:00Z"
+                    uptime_seconds: 5400
+                    components:
+                      trust_anchor_key_files: degraded
         "503":
           description: Server is unavailable (starting, shutting down, or unhealthy)
           content:
@@ -901,7 +916,15 @@ paths:
 
         - Exchanges authorization code for access/refresh tokens (with PKCE)
         - Encrypts tokens using EncryptionPort
-        - Stores session in database
+        - Stores a new session only if no competing callback already created it
+        - Reconnects replace credentials only if the session still matches the private
+          callback generation sealed when authorization began. The first completed callback
+          from a shared starting state wins; competing callbacks return success without
+          replacing its credentials. A later deliberate reconnect captures the new generation.
+          Refresh does not invalidate a reconnect, and reconnect cannot recreate a deleted session.
+        - If an accepted reconnect response omits refresh_token,
+          the broker clears the stored refresh token and its expiry to prevent mixing upstream accounts.
+          The connection requires login again after the new access token expires.
         - Redirects to the original redirect_uri with success=true and service_id;
           for form-initiated flows, also adds the validated consent_state_id so the
           originating tab can recover its return-page data and remove that ID from the URL
@@ -1445,6 +1468,9 @@ paths:
         - When the provider rejects the stored refresh token with HTTP 400 and OAuth error
           `invalid_grant`, the broker returns 400 `invalid_grant` with the same sessions
           landing-page `error_uri`. The stored session is left unchanged.
+        - A missing required client-identity association or a mismatch with the selected client ID
+          returns 400 `invalid_grant` with the same sessions landing-page `error_uri`.
+          The broker stops before provider authentication and leaves the established session unchanged.
         - Any other refresh failure (for example provider `invalid_client`, a provider 5xx,
           an unparseable provider response, or a transport, storage, or decryption failure)
           returns 500 `server_error` without `error_uri`. Provider error descriptions are never
@@ -2583,6 +2609,12 @@ components:
 
             - `healthy`: Upstream key material is reachable and fresh
             - `degraded`: Upstream refresh has failed or become stale
+
+            In any OAuth2 mode, when at least one trust anchor uses `jwks_file`,
+            `trust_anchor_key_files` reports the state of every key-set file:
+
+            - `healthy`: The latest re-read of every key-set file succeeded
+            - `degraded`: The latest re-read of at least one key-set file failed
           additionalProperties:
             type: string
           example:
@@ -3239,6 +3271,8 @@ components:
           description: |
             Optional refresh token for obtaining new access tokens.
             Used when access token expires.
+            Locally issued refresh tokens require continuing consent for the principal and agent.
+            Ended or replaced consent returns invalid_grant without tokens. Proxy refresh is unchanged.
           example: refreshtoken123
 
         scope:
@@ -3651,6 +3685,7 @@ components:
           format: date-time
         is_expired:
           type: boolean
+          description: True when neither the access token nor a stored refresh token is usable. An expired access token alone does not expire a refreshable session.
         access_token_expired:
           type: boolean
         has_refresh_token:
@@ -3659,6 +3694,7 @@ components:
           type: string
           format: date-time
           nullable: true
+          description: Recorded refresh-token expiry, if known. Omission or null does not guarantee that the token never expires.
         dependent_agent_count:
           type: integer
           minimum: 0
@@ -3694,12 +3730,14 @@ components:
           type: string
           format: date-time
           nullable: true
-          description: When the refresh token expires (null if never or unknown)
+          description: Recorded refresh-token expiry, if known. Omission or null does not guarantee that the token never expires.
         is_expired:
           type: boolean
           description: |
-            True if the refresh token has expired. Session is only marked expired
-            when refresh token expires, not access token (access tokens can be refreshed).
+            True when neither the access token nor a stored refresh token is usable.
+            A session remains usable while its access token is valid or it has a refresh
+            token whose recorded expiry is absent or in the future. An access-only
+            session expires with its access token.
         has_refresh_token:
           type: boolean
           description: Whether a refresh token is stored for this session
@@ -3908,9 +3946,12 @@ components:
         expires_in:
           type: integer
           format: int64
+          minimum: 0
           description: |
-            Remaining lifetime in seconds. For third-party token exchange it reflects the
-            stored token; for user impersonation it reflects the configured local token TTL.
+            Remaining lifetime in whole seconds. Omitted when expiry is unknown. Zero
+            means the known remaining lifetime is less than one second, not unknown;
+            consumers must not cache it using an unknown-expiry default. For third-party
+            exchange it reflects the stored token; for impersonation it reflects the local TTL.
           example: 3600
         scope:
           type: string

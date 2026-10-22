@@ -5,9 +5,9 @@
 # optional profile attributes from a signed or unsigned JWT provided by an
 # upstream reverse proxy, API gateway, or service mesh.
 #
-# When `authentication.jwt` is configured, requests missing the JWT header
-# fail closed with 401. The plain pre-auth header is not used as a runtime
-# fallback.
+# When `authentication.jwt` is configured, missing or invalid JWT headers never
+# fall back to the plain principal header. Protected routes return 401; admin
+# CIMD key mutations require an operator principal before generating a key.
 #
 # For full documentation see: docs/configuration.md
 
@@ -27,6 +27,14 @@
 #         header_name: Authorization              # Default; strips "Bearer " prefix
 #         # verification: jwks                    # Default when omitted
 #         jwks_uri: https://auth.example.com/.well-known/jwks.json
+#         # Alternatives to jwks_uri (on server.enduser and server.admin alike). Set at most
+#         # one of jwks_uri, jwks, and jwks_file; neither alternative makes an outbound request.
+#         # jwks_file must lie inside security.trust_material_dir and is re-read every 5 minutes.
+#         # A failed re-read keeps the last valid set until 15 minutes after the last successful read;
+#         # verification then fails closed. A failure does not restart the 15-minute window.
+#         # See trust-anchor-local-jwks.yaml. With ${VAR} expansion, use it as the whole value.
+#         # jwks: '{"keys":[{"kty":"EC","crv":"P-256","kid":"mesh-2026-10","use":"sig","alg":"ES256","x":"<base64url>","y":"<base64url>"}]}'
+#         # jwks_file: /etc/agentic-identity-broker/trust/mesh-jwks.json
 #         expected_audience: agentic-identity-broker
 #         expected_issuer: https://auth.example.com
 #         claim_extraction:
@@ -44,8 +52,8 @@
 #
 # ⚠️ Security: Only use verification: none in network environments where you
 # trust that JWT injection is controlled (e.g., mutual TLS service mesh).
-# jwks_uri MUST NOT be set when verification is "none" — startup will fail
-# if both are present.
+# jwks_uri, jwks, and jwks_file MUST NOT be set when verification is "none" —
+# startup will fail if any of them is present.
 #
 # server:
 #   enduser:
@@ -91,3 +99,20 @@
 #     authentication:
 #       preauth:
 #         principal_header_name: X-Remote-User
+
+# =============================================================================
+# Example 5: Admin JWT from a Trusted Gateway
+# =============================================================================
+# Configure each server's JWT authentication independently. This admin example
+# requires a gateway to authorize the operator, remove all inbound X-Userinfo
+# headers, then inject its own JWT. Keep port 14000 inaccessible to clients.
+# The gateway's Authorization bearer token is not an operator principal here.
+#
+# server:
+#   admin:
+#     authentication:
+#       jwt:
+#         header_name: X-Userinfo
+#         verification: none
+#         claim_extraction:
+#           principal_expression: "claims.principal"

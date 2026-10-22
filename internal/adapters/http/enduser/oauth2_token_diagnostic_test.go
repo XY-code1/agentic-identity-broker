@@ -23,6 +23,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -343,7 +344,7 @@ func TestTokenExchangeSuccessOmitsFailureMetadataAndCredentials(t *testing.T) {
 	spans := captureTokenExchangeSpans(t)
 	logs := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
 	handler := &OAuth2TokenHandler{Logger: slog.New(logs)}
-	response := tokenexchange.NewTokenExchangeResponseFull("ISSUED_ACCESS_SENTINEL", "Bearer", tokenexchange.AccessTokenType, "ISSUED_REFRESH_SENTINEL", "SCOPE_SENTINEL", 3600)
+	response := tokenexchange.NewTokenExchangeResponseFull("ISSUED_ACCESS_SENTINEL", "Bearer", tokenexchange.AccessTokenType, "ISSUED_REFRESH_SENTINEL", "SCOPE_SENTINEL", ptr.To(int64(3600)))
 	response.Service = tokenexchange.ServiceRef{ID: id.NewServiceID()}
 	ctx, span := otel.Tracer("tokenexchange-test").Start(context.Background(), "tokenexchange.exchange")
 	writer := httptest.NewRecorder()
@@ -356,7 +357,7 @@ func TestTokenExchangeSuccessOmitsFailureMetadataAndCredentials(t *testing.T) {
 	assert.Equal(t, response.RefreshToken, body["refresh_token"])
 	assert.Equal(t, response.TokenType, body["token_type"])
 	assert.Equal(t, response.IssuedTokenType, body["issued_token_type"])
-	assert.EqualValues(t, response.ExpiresIn, body["expires_in"])
+	assert.EqualValues(t, *response.ExpiresIn, body["expires_in"])
 	assert.Equal(t, response.Scope, body["scope"])
 	assert.Equal(t, "no-store", writer.Header().Get("Cache-Control"))
 	assert.Equal(t, "no-cache", writer.Header().Get("Pragma"))
