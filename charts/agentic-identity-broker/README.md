@@ -37,7 +37,7 @@ the broker's default `http://localhost:14000`. Admin `/api` requests must match
 this URL's Host authority; ingress and other reverse proxies must preserve it.
 Forwarded Host headers are not trusted. `/health` probes remain unrestricted.
 
-The admin port must only be reachable through an authenticated proxy. Restrict access at deployment level and route sweep CronJobs through that proxy.
+The admin port must only be reachable through an authenticated proxy. Restrict access at deployment level. The optional [scheduled session sweep](#scheduled-session-sweep) calls the admin Service directly unless `sessionSweep.url` points at the proxy; that section describes the trust requirements of each target.
 
 `broker.server.enduser.authentication.jwt` and `broker.server.admin.authentication.jwt`
 are optional, independent JWT pre-authentication blocks (default: unset). Each supports
@@ -231,6 +231,8 @@ Authorization initiation reads only the client-ID file. Metadata reads resolve n
 | `broker.tokenRefresh.lookaheadDuration` | String (Go duration): refresh before expiry; set below each provider access-token lifetime. | `"5m"` |
 | `broker.tokenRefresh.backgroundWorkers` | Integer (1–20): concurrent refreshes per replica. The 20-worker cap reserves 5 of 25 pooled database connections. | `10` |
 | `broker.tokenRefresh.sweep.defaultPageSize` | Integer (1–1000): default sessions per page for the externally triggered admin sweep. | `100` |
+| `broker.tokenRefresh.healthMetrics.enabled` | Boolean: publish the `oauth2_sessions{service_id,expiry,refreshable}` gauge when telemetry metrics are enabled. Each replica runs one grouped count query per metric export cycle. | `true` |
+| `broker.tokenRefresh.healthMetrics.queryTimeout` | String (Go duration): timeout of the per-export health count query; a slower query reports no data for that cycle. | `"5s"` |
 | `broker.telemetry.serviceName` | Service name reported in every telemetry signal | `agentic-identity-broker` |
 | `broker.telemetry.resourceAttributes` | Additional OTel resource attributes (map) | `{}` |
 | `broker.telemetry.traces.enabled` | Enable trace export via OTLP | `true` |
@@ -480,6 +482,93 @@ Both images share the same version tag to ensure consistency between migrations 
 - Secret names follow the pattern: `{username}.{teamId}-{instanceName}.credentials.postgresql.acid.zalan.do`
 - Migration user gets: `superuser` and `createdb` role attributes
 - Broker user gets: `login` attribute + database ownership (grants full table access)
+
+## Scheduled Session Sweep
+
+Set `sessionSweep.enabled: true` to render a CronJob that calls `POST /api/sessions/sweep` on a schedule. Each run refreshes the stored third-party sessions whose access tokens expire within `sessionSweep.lookaheadDuration`, including sessions of inactive users. The broker itself runs no scheduler. See the [session sweep runbook](../../docs/operations/session-sweep.md) for scheduling guidance and monitoring.
+
+The chart only sends the request. It has no identity model of its own: you supply the credential the admin API accepts as literal headers, headers read from mounted files, or a TLS client certificate. Rendering fails when the sweep is enabled without any of them. Give the job a dedicated operator principal, so the `session sweep` audit event distinguishes scheduled sweeps from manual ones.
+
+| Parameter | Description | Default |
+|---|---|---|
+| `sessionSweep.enabled` | Render the CronJob and its ServiceAccount | `false` |
+| `sessionSweep.schedule` | Cron schedule | `"0 * * * *"` |
+| `sessionSweep.timeZone` | Optional IANA time zone | `""` |
+| `sessionSweep.startingDeadlineSeconds` | Late-start window before a run is skipped | `3600` |
+| `sessionSweep.activeDeadlineSeconds` | Hard cap on one Job; must exceed `timeoutSeconds` | `2100` |
+| `sessionSweep.timeoutSeconds` | Request timeout | `1800` |
+| `sessionSweep.lookaheadDuration` | ISO 8601 lookahead (days, hours, minutes, seconds). Cover one interval plus a missed run; stay shorter than the shortest provider access-token lifetime | `PT2H` |
+| `sessionSweep.dryRun` | Classify candidates without refreshing | `false` |
+| `sessionSweep.pageSize` | Optional `page_size` (1–1000); `null` uses `broker.tokenRefresh.sweep.defaultPageSize` | `null` |
+| `sessionSweep.url` | Target URL; empty targets this release's admin Service, `http://<fullname>.<namespace>.svc:<service.ports.admin>` | `""` |
+| `sessionSweep.host` | `Host` override; empty derives it from `broker.server.admin.publicUrl` for the default target only | `""` |
+| `sessionSweep.headers` | Literal headers. They are rendered into the manifest, so never put secrets here | `{}` |
+| `sessionSweep.headersFromFile` | Headers read from mounted files at run time: `{Name: {path, prefix}}`. Paths are absolute and use only letters, digits, `.`, `_`, `-`, and `/`. `curl` trims the file value and escapes quotes, backslashes, and line breaks in it | `{}` |
+| `sessionSweep.tls.certFile`, `.keyFile`, `.caFile` | TLS client certificate, key, and CA bundle paths | `""` |
+| `sessionSweep.volumes`, `sessionSweep.volumeMounts` | Volumes that provide header and TLS files | `[]` |
+| `sessionSweep.image.repository`, `.tag`, `.pullPolicy` | Image with a POSIX shell and `curl` 8.3 or later, which reads header files through config variables | `curlimages/curl`, `8.16.0`, `IfNotPresent` |
+| `sessionSweep.resources` | Container resources | `50m` CPU, `64Mi` memory |
+| `sessionSweep.podLabels`, `sessionSweep.podAnnotations` | Extra pod metadata; `podLabels` override `commonLabels` | `{}` |
+
+The job never retries within a run (`backoffLimit: 0`) and never overlaps a running sweep (`concurrencyPolicy: Forbid`). It succeeds on any `2xx` response, including one with `failed` greater than zero, and prints the response summary. Any other status, a timeout, or an unreachable target fails the Job. `curl` reads each header file itself at run time, so its value never appears in the manifest, a process argument list, the environment, or the log. A missing header file fails the run before any request is sent; `curl` trims and escapes the value, so a malformed file cannot alter the request and fails with the target's status. The job pod carries `app.kubernetes.io/component: session-sweep` and never the broker's `app.kubernetes.io/name` label, so it cannot become a broker Service endpoint.
+
+### Through the authenticating proxy with a projected ServiceAccount token
+
+```yaml
+sessionSweep:
+  enabled: true
+  url: https://broker-admin.example.com      # the proxy; it must authorize this ServiceAccount as a sweep operator
+  headersFromFile:
+    Authorization:
+      path: /var/run/secrets/session-sweep/token
+      prefix: "Bearer "
+  volumes:
+    - name: proxy-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              path: token
+              audience: broker-admin-proxy
+              expirationSeconds: 3600
+  volumeMounts:
+    - name: proxy-token
+      mountPath: /var/run/secrets/session-sweep
+      readOnly: true
+```
+
+The proxy must validate the token issuer, signature, audience, expiry, and ServiceAccount (`<fullname>-session-sweep`), then forward the operator principal the admin server expects.
+
+### Through the authenticating proxy with a TLS client certificate
+
+```yaml
+sessionSweep:
+  enabled: true
+  url: https://broker-admin.example.com
+  tls:
+    certFile: /var/run/secrets/session-sweep/tls.crt
+    keyFile: /var/run/secrets/session-sweep/tls.key
+    caFile: /var/run/secrets/session-sweep/ca.crt
+  volumes:
+    - name: client-cert
+      secret:
+        secretName: broker-session-sweep-client-cert
+  volumeMounts:
+    - name: client-cert
+      mountPath: /var/run/secrets/session-sweep
+      readOnly: true
+```
+
+### Trust requirements
+
+The admin server authenticates the configured identity but does not decide who is an operator; the authenticating proxy normally makes that decision. A request to the admin Service directly, which is the default target, is trusted only as far as the admin server's own authentication goes. If your deployment calls the admin Service directly, restrict network access to the admin port to the proxy and the sweep job, for example with a NetworkPolicy that admits pods labeled `app.kubernetes.io/component: session-sweep`.
+
+### Render the CronJob as a plain manifest
+
+```bash
+helm template broker ./charts/agentic-identity-broker -n identity -f values.yaml \
+  --show-only templates/cronjob-session-sweep.yaml \
+  --show-only templates/serviceaccount-session-sweep.yaml
+```
 
 ## Static Manifest Generation
 
