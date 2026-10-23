@@ -71,9 +71,9 @@ The model is complete in [data-model.md](./data-model.md). Remaining work:
 
 ### Phase 2d: Database design
 
-- [X] T020 [P] Create `migrations/040_create_client_assertion_replays.up.sql` and `.down.sql` exactly as in data-model.md: table `client_assertion_replays` with `client_id TEXT NOT NULL`, `jti TEXT NOT NULL`, `expires_at TIMESTAMPTZ NOT NULL`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`, `PRIMARY KEY (client_id, jti)`, and index `idx_client_assertion_replays_expires_at` on `expires_at`. Down drops the index and the table.
-- [X] T021 [P] Create `migrations/041_add_refresh_token_client_auth_method.up.sql` and `.down.sql`: `ALTER TABLE refresh_token_sessions ADD COLUMN client_auth_method TEXT NULL` plus `ADD CONSTRAINT chk_refresh_token_sessions_client_auth_method CHECK (client_auth_method IS NULL OR client_auth_method = 'private_key_jwt') NOT VALID`, so adding it does not scan the table. Do not run `VALIDATE CONSTRAINT`: every existing row is `NULL` by construction, and the constraint is enforced for all new and updated rows. Down drops the constraint and the column. Nullable, no default: existing rows stay `NULL`, which is correct for grants issued before this feature.
-- [X] T022 Write failing migration tests in `tests/integration/migrations/client_assertion_replay_test.go` (build tag `integration`, follow `refresh_consent_test.go`): `TestMigration040` applies, rolls back and re-applies; asserts the primary key rejects a duplicate `(client_id, jti)` and allows the same `jti` for another client. `TestMigration041` seeds `refresh_token_sessions` rows at version 40, applies, and asserts every existing row has `client_auth_method IS NULL` and no other column changed; asserts the check constraint rejects an insert or update setting any value other than `private_key_jwt` or `NULL`, and that `pg_constraint.convalidated` is false for it; rolls back and re-applies without data loss.
+- [X] T020 [P] Create `migrations/042_create_client_assertion_replays.up.sql` and `.down.sql` exactly as in data-model.md: table `client_assertion_replays` with `client_id TEXT NOT NULL`, `jti TEXT NOT NULL`, `expires_at TIMESTAMPTZ NOT NULL`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`, `PRIMARY KEY (client_id, jti)`, and index `idx_client_assertion_replays_expires_at` on `expires_at`. Down drops the index and the table.
+- [X] T021 [P] Create `migrations/043_add_refresh_token_client_auth_method.up.sql` and `.down.sql`: `ALTER TABLE refresh_token_sessions ADD COLUMN client_auth_method TEXT NULL` plus `ADD CONSTRAINT chk_refresh_token_sessions_client_auth_method CHECK (client_auth_method IS NULL OR client_auth_method = 'private_key_jwt') NOT VALID`, so adding it does not scan the table. Do not run `VALIDATE CONSTRAINT`: every existing row is `NULL` by construction, and the constraint is enforced for all new and updated rows. Down drops the constraint and the column. Nullable, no default: existing rows stay `NULL`, which is correct for grants issued before this feature.
+- [X] T022 Write failing migration tests in `tests/integration/migrations/client_assertion_replay_test.go` (build tag `integration`, follow `refresh_consent_test.go`): `TestMigration042` applies, rolls back and re-applies; asserts the primary key rejects a duplicate `(client_id, jti)` and allows the same `jti` for another client. `TestMigration043` seeds `refresh_token_sessions` rows at version 42, applies, and asserts every existing row has `client_auth_method IS NULL` and no other column changed; asserts the check constraint rejects an insert or update setting any value other than `private_key_jwt` or `NULL`, and that `pg_constraint.convalidated` is false for it; rolls back and re-applies without data loss.
 
 ### Phase 2f: E2E acceptance test design (red phase)
 
@@ -265,7 +265,7 @@ The model is complete in [data-model.md](./data-model.md). Remaining work:
 ### Configuration, database and security
 
 - [X] T089 Verify the Helm chart renders the new keys and `just` chart tests pass (Principle VII); confirm the standalone ExtProc binary is unaffected.
-- [X] T090 Compare migrations with other open work before merge. Migrations 038 and 039 and ADR 040 are now occupied, feature 050 is already used, and ADR 041 is now occupied by the OAuth2 client-secret file override decision. This feature uses migration versions 040 and 041, ADR 042, and feature number 051. Update every reference and rerun T022. Review the `refresh_token_sessions` column against feature 049's changes to the same table.
+- [X] T090 Compare migrations with other open work before merge. Migrations 038 to 041 and ADR 040 are now occupied, feature 050 is already used, and ADR 041 is now occupied by the OAuth2 client-secret file override decision. This feature uses migration versions 042 and 043, ADR 042, and feature number 051. Update every reference and rerun T022. Review the `refresh_token_sessions` column against feature 049's changes to the same table.
 - [X] T091 Verify migrations apply, roll back and repeat (T022), every PostgreSQL repository method has an integration test (T037, T061), and `just test-integration-infra` is green.
 - [X] T092 Security review against the spec: enforcement cannot be disabled (SR-001); only `jwx` v4 and Go `crypto/*` are used (SR-002); all failure paths fail closed (SR-003); grep the new code and a captured E2E log for assertion strings, tokens, codes and key material (SR-004, SC-007); audit events exist for success, rejection and key-set refresh (SR-005); verification algorithm comes only from the document (SR-006); a document edit cannot weaken a live grant (SR-007).
 - [X] T093 Verify hexagonal boundaries and wiring: domain imports no adapter or app package; all construction is in `internal/app/builder.go`; routing receives pre-wired dependencies (Principles VI and XII).
@@ -289,7 +289,7 @@ The model is complete in [data-model.md](./data-model.md). Remaining work:
 - **Phases 3 to 7**: need Phase 2.5.
   - US1 (Phase 3) has no story dependencies.
   - US2 (Phase 4) builds on US1's `Provider` wiring (T051) and `ClientCredentials` plumbing (T052).
-  - US3 (Phase 5) needs US1 wiring and migration 040.
+  - US3 (Phase 5) needs US1 wiring and migration 042.
   - US4 (Phase 6) needs US1 wiring.
   - US5 (Phase 7) needs US1 and US2 (FR-025).
 - **Phase N**: after the stories you intend to ship.
@@ -344,4 +344,4 @@ After T019 and Phase 2.5, three tracks can proceed: (A) US1 then US2 on the prov
 
 - Existing artefacts reused: `FositeStorage` transaction pattern, `SessionCleanup`, the CIMD fetcher and SSRF blocklist, `urivalidation.ValidateCIMDClientURL`, `jwx` v4 as used in `internal/domain/tokenexchange/jwt_validator.go`.
 - The earlier branch draft (`specs/050-cimd-private-key-jwt/`, old ADR 040) is discarded, not merged.
-- Migration and ADR numbers (040, 041) account for the already-landed migrations 038 and 039 and ADR 040; feature number 051 avoids the existing feature 050. T090 records this re-numbering.
+- Migration numbers (042, 043) and ADR number 042 account for the already-landed migrations 038 to 041 and ADR 040; feature number 051 avoids the existing feature 050. T090 records this re-numbering.
