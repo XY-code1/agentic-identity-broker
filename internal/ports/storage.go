@@ -116,6 +116,7 @@ type AgentRepository interface {
 	// Delete reports whether the primary agent row was actually deleted; absence is false, nil.
 	Delete(ctx context.Context, id id.AgentID) (bool, error)
 	List(ctx context.Context) ([]*storage.Agent, error)
+	ListByExternalID(ctx context.Context, externalID id.ExternalID) ([]*storage.Agent, error)
 	GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error)
 	ExistsOtherWithClientID(ctx context.Context, clientID id.ClientID, excludeAgentID *id.AgentID) (bool, error)
 	// GetByClientURI resolves an exact CIMD URL first, then a URI pattern.
@@ -508,5 +509,15 @@ type PKCESessionRepository interface {
 	Delete(ctx context.Context, signature string) error
 
 	// DeleteExpired removes PKCE sessions whose authorization codes have expired.
+	DeleteExpired(ctx context.Context) (int, error)
+}
+
+// ClientAssertionReplayRepository atomically consumes each CIMD client assertion jti once.
+type ClientAssertionReplayRepository interface {
+	// Consume inserts the client/jti pair until expiresAt. It must be atomic and must not join an ambient transaction.
+	// A previously consumed pair returns a conflict StorageError.
+	Consume(ctx context.Context, clientID, jti string, expiresAt time.Time) error
+
+	// DeleteExpired removes replay records whose retention period has elapsed.
 	DeleteExpired(ctx context.Context) (int, error)
 }
